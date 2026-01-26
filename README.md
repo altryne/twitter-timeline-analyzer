@@ -1,5 +1,11 @@
 # Twitter Timeline Analyzer
 
+
+
+https://github.com/user-attachments/assets/a778d076-4fe7-4c3e-82e8-6307ab0ae29f
+
+
+
 A Chrome extension that uses AI to analyze and filter your Twitter/X timeline based on custom topics you define.
 
 ## Features
@@ -12,6 +18,7 @@ A Chrome extension that uses AI to analyze and filter your Twitter/X timeline ba
 - **Weave Observability**: Optional [W&B Weave](https://docs.wandb.ai/weave/) integration for tracing LLM calls
 
 ## Installation
+
 
 ### Load as Unpacked Extension
 
@@ -51,6 +58,7 @@ The extension works with any **OpenAI-compatible API**. Here are some options:
 | [OpenRouter](https://openrouter.ai/) | `https://openrouter.ai/api/v1` | Limited | Varies |
 
 #### Quick Setup
+<img width="649" height="848" alt="image" src="https://github.com/user-attachments/assets/ce367827-663c-4043-ba0d-c8974cd473e9" />
 
 1. Click the extension icon → **Settings** (or right-click → Options)
 2. Select a provider preset (e.g., Cerebras, Groq)
