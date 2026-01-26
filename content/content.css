@@ -1,0 +1,353 @@
+/* Twitter Timeline Analyzer - Injected Styles */
+
+/* Topic pill/tag */
+.ta-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  margin-left: 8px;
+  vertical-align: middle;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+  opacity: 0.9;
+  transition: opacity 0.2s;
+}
+
+.ta-pill:hover {
+  opacity: 1;
+}
+
+/* Multiple pills */
+.ta-pill + .ta-pill {
+  margin-left: 4px;
+}
+
+/* Highlight overlay */
+.ta-highlight-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Highlighted tweet */
+.ta-highlighted {
+  background-color: var(--ta-highlight-color, rgba(29, 155, 240, 0.1)) !important;
+}
+
+/* Hidden tweet - just in case display:none doesn't work */
+.ta-hidden {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Animation for new pills */
+@keyframes ta-pill-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+}
+
+.ta-pill {
+  animation: ta-pill-appear 0.2s ease-out;
+}
+
+/* Animation for highlight */
+@keyframes ta-highlight-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.8;
+  }
+}
+
+.ta-highlight-overlay {
+  animation: ta-highlight-appear 0.3s ease-out;
+}
+
+/* Dark mode compatibility - Twitter already handles this via CSS vars */
+/* But we ensure good contrast */
+.ta-pill {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ========== CATEGORIZE MODAL ========== */
+
+.ta-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+}
+
+.ta-modal-overlay.ta-modal-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.ta-modal {
+  background: #15202b;
+  border-radius: 16px;
+  width: 90%;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #38444d;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  transform: scale(0.95);
+  transition: transform 0.2s;
+}
+
+.ta-modal-visible .ta-modal {
+  transform: scale(1);
+}
+
+.ta-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #38444d;
+}
+
+.ta-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #e7e9ea;
+}
+
+.ta-modal-close {
+  background: transparent;
+  border: none;
+  color: #8b98a5;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.ta-modal-close:hover {
+  background: rgba(239, 243, 244, 0.1);
+  color: #e7e9ea;
+}
+
+.ta-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.ta-modal-section {
+  margin-bottom: 20px;
+}
+
+.ta-modal-section:last-child {
+  margin-bottom: 0;
+}
+
+.ta-modal-section label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8b98a5;
+  margin-bottom: 8px;
+}
+
+.ta-topic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.ta-topic-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #192734;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.ta-topic-option:hover {
+  background: #22303c;
+}
+
+.ta-topic-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #1d9bf0;
+  cursor: pointer;
+}
+
+.ta-topic-emoji {
+  font-size: 18px;
+}
+
+.ta-topic-name {
+  flex: 1;
+  font-size: 14px;
+  color: #e7e9ea;
+}
+
+.ta-topic-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.ta-modal-section textarea {
+  width: 100%;
+  background: #192734;
+  border: 1px solid #38444d;
+  border-radius: 8px;
+  padding: 12px;
+  color: #e7e9ea;
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.ta-modal-section textarea::placeholder {
+  color: #6e767d;
+}
+
+.ta-modal-section textarea:focus {
+  outline: none;
+  border-color: #1d9bf0;
+}
+
+.ta-tweet-preview {
+  background: #192734;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 13px;
+  color: #8b98a5;
+  line-height: 1.4;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.ta-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #38444d;
+}
+
+.ta-btn {
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.ta-btn-primary {
+  background: #1d9bf0;
+  color: #fff;
+}
+
+.ta-btn-primary:hover {
+  background: #1a8cd8;
+}
+
+.ta-btn-primary:disabled {
+  background: #38444d;
+  cursor: not-allowed;
+}
+
+.ta-btn-secondary {
+  background: transparent;
+  color: #e7e9ea;
+  border: 1px solid #536471;
+}
+
+.ta-btn-secondary:hover {
+  background: rgba(239, 243, 244, 0.1);
+}
+
+/* ========== NOTIFICATION TOAST ========== */
+
+.ta-notification {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: #1d9bf0;
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 10001;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: transform 0.3s, opacity 0.3s;
+}
+
+.ta-notification-visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+.ta-notification-success {
+  background: #00ba7c;
+}
+
+.ta-notification-error {
+  background: #f4212e;
+}
+
+/* ========== MENU ITEM STYLING ========== */
+
+.ta-categorize-item {
+  cursor: pointer;
+  border-bottom: 1px solid #38444d !important;
+}
+
+.ta-categorize-item:hover {
+  background: rgba(29, 155, 240, 0.1) !important;
+}

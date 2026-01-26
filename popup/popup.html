@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitter Analyzer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Timeline Analyzer</h1>
+      <div class="header-actions">
+        <button id="settingsBtn" class="icon-btn" title="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="notOnTwitter" class="warning" style="display: none;">
+      <p>Navigate to Twitter/X to use this extension</p>
+    </div>
+
+    <div id="mainContent">
+      <section class="status-section">
+        <div class="status-row">
+          <span>Analysis</span>
+          <label class="toggle">
+            <input type="checkbox" id="analysisToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="criteria-section">
+        <h2>Topics & Criteria</h2>
+        <div class="add-criteria">
+          <textarea id="criteriaInput" placeholder="Describe what you want to detect...&#10;e.g., 'politics and election news' or 'AI and machine learning discussions'"></textarea>
+
+          <div id="topicCustomizer" class="topic-customizer" style="display: none;">
+            <div class="customizer-row">
+              <div class="customizer-field">
+                <label>Emoji</label>
+                <input type="text" id="newTopicEmoji" class="emoji-input" value="🏷️" maxlength="4" placeholder="🏷️">
+              </div>
+              <div class="customizer-field">
+                <label>Color</label>
+                <div class="color-picker">
+                  <input type="color" id="newTopicColor" value="#1d9bf0">
+                  <div class="color-presets" id="colorPresets"></div>
+                </div>
+              </div>
+              <div class="customizer-preview">
+                <label>Preview</label>
+                <span id="tagPreview" class="ta-pill-preview">🏷️ Topic name</span>
+              </div>
+            </div>
+          </div>
+
+          <button id="addCriteriaBtn" class="primary-btn">Add Topic</button>
+        </div>
+
+        <div id="criteriaList" class="criteria-list">
+          <!-- Criteria items will be inserted here -->
+        </div>
+      </section>
+
+      <section class="stats-section">
+        <h2>Session Stats</h2>
+        <div class="stats-grid">
+          <div class="stat">
+            <span class="stat-value" id="tweetsAnalyzed">0</span>
+            <span class="stat-label">Analyzed</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="tweetsTagged">0</span>
+            <span class="stat-label">Tagged</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="tweetsHidden">0</span>
+            <span class="stat-label">Hidden</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="apiWarning" class="warning" style="display: none;">
+      <p>API key not configured. <a href="#" id="openSettings">Set up in options</a></p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

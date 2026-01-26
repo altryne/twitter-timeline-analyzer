@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitter Analyzer Settings</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #15202b;
+      color: #e7e9ea;
+      min-height: 100vh;
+      padding: 40px;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #8b98a5;
+      margin-bottom: 32px;
+    }
+
+    .section {
+      background: #192734;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .section h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      color: #e7e9ea;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: #e7e9ea;
+    }
+
+    .label-hint {
+      font-weight: 400;
+      color: #6e767d;
+      font-size: 12px;
+      margin-left: 4px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    select {
+      width: 100%;
+      background: #253341;
+      border: 1px solid #38444d;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #e7e9ea;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: #1d9bf0;
+    }
+
+    input::placeholder {
+      color: #6e767d;
+    }
+
+    select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b98a5' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 40px;
+    }
+
+    .presets {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .preset-btn {
+      background: #253341;
+      border: 1px solid #38444d;
+      border-radius: 16px;
+      padding: 6px 12px;
+      color: #8b98a5;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .preset-btn:hover {
+      border-color: #1d9bf0;
+      color: #1d9bf0;
+    }
+
+    .preset-btn.active {
+      background: #1d9bf0;
+      border-color: #1d9bf0;
+      color: #fff;
+    }
+
+    .save-btn {
+      width: 100%;
+      background: #1d9bf0;
+      color: #fff;
+      border: none;
+      border-radius: 24px;
+      padding: 14px 24px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .save-btn:hover {
+      background: #1a8cd8;
+    }
+
+    .save-btn:disabled {
+      background: #38444d;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+    }
+
+    .status.success {
+      display: block;
+      background: #1e3a2f;
+      color: #00ba7c;
+    }
+
+    .status.error {
+      display: block;
+      background: #3d1f1f;
+      color: #f4a3a3;
+    }
+
+    .info-box {
+      background: #1e2d3a;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 13px;
+      color: #8b98a5;
+    }
+
+    .info-box a {
+      color: #1d9bf0;
+      text-decoration: none;
+    }
+
+    .info-box a:hover {
+      text-decoration: underline;
+    }
+
+    .info-box code {
+      background: #253341;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .password-wrapper {
+      position: relative;
+    }
+
+    .toggle-password {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: #8b98a5;
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .toggle-password:hover {
+      color: #e7e9ea;
+    }
+
+    .model-row {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .model-row select {
+      flex: 1;
+    }
+
+    .refresh-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #253341;
+      border: 1px solid #38444d;
+      border-radius: 8px;
+      padding: 8px 14px;
+      color: #8b98a5;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .refresh-btn:hover {
+      border-color: #1d9bf0;
+      color: #1d9bf0;
+    }
+
+    .refresh-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .refresh-btn svg {
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Settings</h1>
+    <p class="subtitle">Configure your LLM provider for tweet analysis</p>
+
+    <div class="section">
+      <h2>LLM Configuration</h2>
+
+      <div class="form-group">
+        <label>Quick Setup</label>
+        <div class="presets">
+          <button class="preset-btn" data-preset="cerebras">Cerebras</button>
+          <button class="preset-btn" data-preset="openai">OpenAI</button>
+          <button class="preset-btn" data-preset="groq">Groq</button>
+          <button class="preset-btn" data-preset="together">Together AI</button>
+          <button class="preset-btn" data-preset="openrouter">OpenRouter</button>
+          <button class="preset-btn" data-preset="custom">Custom</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="apiBaseUrl">API Base URL</label>
+        <input type="text" id="apiBaseUrl" placeholder="https://api.cerebras.ai/v1">
+      </div>
+
+      <div class="form-group">
+        <label for="apiKey">
+          API Key
+          <span class="label-hint">(stored locally)</span>
+        </label>
+        <div class="password-wrapper">
+          <input type="password" id="apiKey" placeholder="sk-...">
+          <button type="button" class="toggle-password" id="togglePassword">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="model">Model</label>
+        <div class="model-row">
+          <select id="model">
+            <option value="">Select a model...</option>
+          </select>
+          <button type="button" class="refresh-btn" id="refreshModelsBtn" title="Fetch models from API">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6"></path>
+              <path d="M1 20v-6h6"></path>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="info-box" id="providerInfo">
+        Select a provider above to see setup instructions.
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Observability <span class="label-hint">(optional)</span></h2>
+
+      <div class="form-group">
+        <label for="wandbApiKey">
+          W&B API Key
+          <span class="label-hint">(for Weave tracing)</span>
+        </label>
+        <div class="password-wrapper">
+          <input type="password" id="wandbApiKey" placeholder="wandb_api_key_...">
+          <button type="button" class="toggle-password" id="toggleWandbPassword">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="wandbProject">
+          W&B Project
+          <span class="label-hint">(entity/project format)</span>
+        </label>
+        <input type="text" id="wandbProject" placeholder="your-username/twitter-analyzer">
+      </div>
+
+      <div class="info-box">
+        Enable LLM call tracing with <a href="https://docs.wandb.ai/weave/" target="_blank">W&B Weave</a>.
+        Get your API key from <a href="https://wandb.ai/settings" target="_blank">wandb.ai/settings</a>.
+        Project format: <code>entity/project-name</code> (e.g., <code>altryne/twitter-analyzer</code>).
+      </div>
+    </div>
+
+    <button class="save-btn" id="saveBtn">Save Settings</button>
+
+    <div class="status" id="status"></div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
