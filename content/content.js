@@ -5,6 +5,30 @@
   if (window.__twitterAnalyzerInjected) return;
   window.__twitterAnalyzerInjected = true;
 
+  // ---- One live instance per page ----
+  // Reloading the extension leaves the previous content script running in open tabs, cut off
+  // from the extension. It would keep "deciding" every tweet as no-match and strip the tags the
+  // new copy draws: flashing tags and a busy renderer. So: a new copy announces itself and older
+  // copies stand down; a copy that loses its extension context stands down by itself.
+  const INSTANCE_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let dead = false;
+  const teardown = [];
+  function shutDown(reason) {
+    if (dead) return;
+    dead = true;
+    isActive = false;
+    teardown.forEach(fn => { try { fn(); } catch { /* best effort */ } });
+    tweetQueue = [];
+    console.log(`[Twitter Analyzer] Instance ${INSTANCE_ID} stood down: ${reason}`);
+  }
+  const contextAlive = () => { try { return Boolean(chrome.runtime?.id); } catch { return false; } };
+  const onTakeover = (e) => { if (e.detail !== INSTANCE_ID) shutDown('a newer copy took over'); };
+  document.addEventListener('ta-takeover', onTakeover);
+  teardown.push(() => document.removeEventListener('ta-takeover', onTakeover));
+  document.dispatchEvent(new CustomEvent('ta-takeover', { detail: INSTANCE_ID }));
+  const contextWatch = setInterval(() => { if (!contextAlive()) shutDown('extension was reloaded or removed'); }, 1000);
+  teardown.push(() => clearInterval(contextWatch));
+
   // State
   let isActive = false;
   let criteria = [];
@@ -277,7 +301,7 @@
     let reapplyTimeout;
 
     const observer = new MutationObserver((mutations) => {
-      if (!isActive) return;
+      if (dead || !isActive) return;
 
       // Check if any mutations are relevant (new tweets added)
       const hasRelevantMutation = mutations.some(m =>
@@ -320,11 +344,12 @@
     });
 
     // Safety net: keep sweeping for undecided tweets no matter which DOM events we missed
-    setInterval(() => {
-      if (isActive && criteria.length > 0 && Date.now() - lastSweepAt >= SWEEP_INTERVAL_MS) {
+    const sweepTimer = setInterval(() => {
+      if (!dead && isActive && criteria.length > 0 && Date.now() - lastSweepAt >= SWEEP_INTERVAL_MS) {
         processVisibleTweets();
       }
     }, SWEEP_INTERVAL_MS);
+    teardown.push(() => clearInterval(sweepTimer), () => observer.disconnect());
 
     observer.observe(document.body, {
       childList: true,
@@ -379,6 +404,7 @@
 
   // Re-apply visual changes to tweets that have cached results
   function reapplyVisuals() {
+    if (dead) return;
     const tweets = document.querySelectorAll(SELECTORS.tweet);
 
     tweets.forEach(tweet => {
@@ -441,6 +467,8 @@
 
   // Process all visible tweets
   function processVisibleTweets() {
+    if (dead) return;
+    if (!contextAlive()) { shutDown('extension was reloaded or removed'); return; }
     lastSweepAt = Date.now();
     const tweets = document.querySelectorAll(SELECTORS.tweet);
 
@@ -456,9 +484,12 @@
         delete tweet.dataset.taTweetId;
       }
 
-      // Check if already cached
+      // Already decided: only touch the DOM if X dropped our visuals. The sweeper runs every
+      // 400 ms, so redrawing intact tweets here would make every chip and tag flicker.
       if (tweetCache.has(tweetId)) {
-        applyVisualChanges(tweet, tweetCache.get(tweetId).result, tweetId);
+        if (!(tweet.dataset.taProcessed && tweet.dataset.taTweetId === tweetId && hasIntactVisuals(tweet))) {
+          applyVisualChanges(tweet, tweetCache.get(tweetId).result, tweetId);
+        }
         return;
       }
 
@@ -819,7 +850,7 @@
 
   // Apply visual changes to tweet (non-destructive)
   function applyVisualChanges(element, result, tweetId) {
-    if (!result || !element) return;
+    if (dead || !result || !element) return;
 
     // Mark element with tweet ID for future lookups
     element.dataset.taTweetId = tweetId;
@@ -827,7 +858,7 @@
 
     // No matches - ensure clean state
     if (!result.matchedCriteria || result.matchedCriteria.length === 0) {
-      cleanVisuals(element);
+      cleanVisuals(element, { keepScores: true }); // renderScores updates the chip row in place
       renderScores(element, result);
       return;
     }
@@ -942,8 +973,8 @@
   }
 
   // Remove all visual modifications from an element
-  function cleanVisuals(element) {
-    element.querySelectorAll('.ta-pill, .ta-highlight-overlay, .ta-scores').forEach(el => el.remove());
+  function cleanVisuals(element, { keepScores = false } = {}) {
+    element.querySelectorAll(keepScores ? '.ta-pill, .ta-highlight-overlay' : '.ta-pill, .ta-highlight-overlay, .ta-scores').forEach(el => el.remove());
     element.style.removeProperty('display');
     element.classList.remove('ta-hidden', 'ta-highlighted');
     element.style.removeProperty('--ta-highlight-color');
@@ -1185,12 +1216,14 @@
       }
     });
 
+    teardown.push(() => menuObserver.disconnect());
     menuObserver.observe(document.body, {
       childList: true,
       subtree: true
     });
 
     // Also watch for attribute changes that might indicate menu visibility
+    teardown.push(() => layerObserver.disconnect());
     const layerObserver = new MutationObserver(() => {
       // Check for any menu that doesn't have our item
       const menus = document.querySelectorAll('[role="menu"]');

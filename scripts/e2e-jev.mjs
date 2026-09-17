@@ -105,6 +105,15 @@ try {
   rows.forEach(r => console.log(`  ${r.pills.length ? r.pills.join(' | ').padEnd(34) : '-'.padEnd(34)} ${r.highlighted ? 'HL' : '  '} ${r.text}`));
   console.log(`\n${tweets.length} tweets decided and rendered in ${wallMs} ms from navigation (${(tweets.length / (wallMs / 1000)).toFixed(1)} tweets/s, includes page load)`);
 
+  const churn = await page.evaluate(async () => {
+    let add = 0, rem = 0;
+    const mo = new MutationObserver(ms => ms.forEach(m => { m.addedNodes.forEach(n => { if (n.classList?.contains('ta-pill') || n.classList?.contains('ta-scores')) add++; }); m.removedNodes.forEach(n => { if (n.classList?.contains('ta-pill') || n.classList?.contains('ta-scores')) rem++; }); }));
+    mo.observe(document.body, { childList: true, subtree: true });
+    await new Promise(r => setTimeout(r, 3000));
+    mo.disconnect();
+    return { add, rem };
+  });
+  console.log('TAG CHURN over 3 idle seconds (must be 0/0):', JSON.stringify(churn));
   const scrollStart = Date.now();
   const total = await page.evaluate(async (seed) => {
     const timeline = document.querySelector('[aria-label^="Timeline"]');
@@ -147,6 +156,17 @@ try {
   const stats = await sw.evaluate(async () => (await chrome.storage.local.get(['stats'])).stats);
   console.log('stats in storage:', JSON.stringify(stats));
   await page.screenshot({ path: path.join(OUT, 'timeline.png'), fullPage: true });
+
+  // A newer copy announces itself: this one must stand down and stop touching the page
+  const stoodDown = await page.evaluate(async () => {
+    document.dispatchEvent(new CustomEvent('ta-takeover', { detail: 'newer-copy' }));
+    const a = document.createElement('article'); a.setAttribute('data-testid', 'tweet');
+    a.innerHTML = '<div data-testid="User-Name"><span>@late</span> <a href="/late/status/2100000000000099999"><time>now</time></a></div><div data-testid="tweetText">Gemini 3.8 Live is an amazing new AI model from Google</div>';
+    document.querySelector('[aria-label^="Timeline"]').appendChild(a);
+    await new Promise(r => setTimeout(r, 1500));
+    return !a.dataset.taProcessed;
+  });
+  console.log('old copy stands down on takeover (must be true):', stoodDown);
 
   // Popup: share bars and takeover line
   const popup = await browser.newPage();
