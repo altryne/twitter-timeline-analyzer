@@ -15,7 +15,14 @@
   let stats = { analyzed: 0, tagged: 0, hidden: 0, byTopic: {} };
 
   // Decision engine. With Jev on, the LLM only writes criteria; Jev decides every tweet.
-  let engine = { jev: false, decideAll: true, signature: '' };
+  let engine = { jev: false, decideAll: true, showScores: true, signature: '' };
+
+  // Bulk pump (Jev mode): a sweeper keeps finding undecided tweets, batches go out continuously
+  const BULK_SIZE = 8;          // tweets per Jev call (bulk accuracy holds up to here, see scripts/test-jev-bulk.mjs)
+  const BULK_MAX_INFLIGHT = 3;  // batches in flight at once
+  const SWEEP_INTERVAL_MS = 400;
+  let inflightBatches = 0;
+  let lastSweepAt = 0;
 
   // Failed decisions are never cached (a dead API key must not turn into "matches nothing").
   // They are retried after a pause, and the error is shown once instead of failing silently.
@@ -97,7 +104,8 @@
       const settings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
       engine = {
         jev: Boolean(settings?.jevConfigured),
-        decideAll: settings?.jevDecideAll !== false
+        decideAll: settings?.jevDecideAll !== false,
+        showScores: settings?.jevShowScores !== false
       };
       // Anything that changes what a decision would be. Cached results from another setup are stale.
       engine.signature = [
@@ -108,7 +116,7 @@
         settings?.model || ''
       ].join('|');
     } catch {
-      engine = { jev: false, decideAll: true, signature: 'unknown' };
+      engine = { jev: false, decideAll: true, showScores: true, signature: 'unknown' };
     }
   }
 
@@ -130,6 +138,16 @@
 
   async function handleStorageChange(changes, area) {
     if (area !== 'local') return;
+
+    // Display-only setting: redraw what we already know
+    if (changes.jevShowScores && !changes.jevEnabled && !changes.jevApiKey && !changes.jevThreshold && !changes.jevModel && !changes.jevDecideAll) {
+      engine.showScores = changes.jevShowScores.newValue !== false;
+      document.querySelectorAll('[data-ta-tweet-id]').forEach(el => {
+        const cached = tweetCache.get(el.dataset.taTweetId);
+        if (cached) { cleanVisuals(el); applyVisualChanges(el, cached.result, el.dataset.taTweetId); }
+      });
+      return;
+    }
 
     // Jev switched on/off, re-keyed, or threshold moved: old decisions no longer apply
     if (changes.jevEnabled || changes.jevApiKey || changes.jevThreshold || changes.jevModel || changes.jevDecideAll) {
@@ -185,11 +203,24 @@
         return;
       }
 
-      clearTimeout(mutationTimeout);
-      mutationTimeout = setTimeout(() => {
+      // Throttle, do not debounce: during a long continuous scroll a debounce never fires and
+      // tweets scroll past undecided. Run now if we have not swept recently, else very soon.
+      if (Date.now() - lastSweepAt > 120) {
         processVisibleTweets();
-      }, 150);
+      } else if (!mutationTimeout) {
+        mutationTimeout = setTimeout(() => {
+          mutationTimeout = null;
+          processVisibleTweets();
+        }, 120);
+      }
     });
+
+    // Safety net: keep sweeping for undecided tweets no matter which DOM events we missed
+    setInterval(() => {
+      if (isActive && criteria.length > 0 && Date.now() - lastSweepAt >= SWEEP_INTERVAL_MS) {
+        processVisibleTweets();
+      }
+    }, SWEEP_INTERVAL_MS);
 
     observer.observe(document.body, {
       childList: true,
@@ -205,7 +236,7 @@
       scrollTimeout = setTimeout(() => {
         if (isActive) {
           reapplyVisuals();
-          prioritizeVisibleTweets();
+          processVisibleTweets();
         }
       }, 50);
     }, { passive: true });
@@ -268,7 +299,16 @@
     if (!tweetId) return false;
 
     const cached = tweetCache.get(tweetId);
-    if (!cached || !cached.result.matchedCriteria.length) return true;
+    if (!cached) return true;
+
+    // The element may have been recycled for another tweet
+    if (getTweetId(element) !== tweetId) return false;
+
+    // The per-topic probability row should be there whenever we have scores to show
+    const hasScores = cached.result.scores && Object.keys(cached.result.scores).length > 0;
+    if (engine.showScores && hasScores && !element.querySelector('.ta-scores')) return false;
+
+    if (!cached.result.matchedCriteria.length) return true;
 
     // Check if expected visuals exist and have correct styles
     for (const c of cached.result.matchedCriteria) {
@@ -296,11 +336,20 @@
 
   // Process all visible tweets
   function processVisibleTweets() {
+    lastSweepAt = Date.now();
     const tweets = document.querySelectorAll(SELECTORS.tweet);
 
     tweets.forEach(tweet => {
       const tweetId = getTweetId(tweet);
       if (!tweetId) return;
+
+      // X recycles timeline cells: an element that now holds a different tweet must not keep
+      // the previous tweet's tags, scores or "already processed" marker
+      if (tweet.dataset.taTweetId && tweet.dataset.taTweetId !== tweetId) {
+        cleanVisuals(tweet);
+        delete tweet.dataset.taProcessed;
+        delete tweet.dataset.taTweetId;
+      }
 
       // Check if already cached
       if (tweetCache.has(tweetId)) {
@@ -353,6 +402,11 @@
   // Process tweet queue with a small worker pool.
   // Jev: 8 tweets in flight, visible ones first. LLM: one at a time with a pause.
   async function processQueue() {
+    if (engine.jev) {
+      pumpBulk();
+      return;
+    }
+
     if (isProcessing || tweetQueue.length === 0 || criteria.length === 0) return;
     if (Date.now() < pausedUntil) return;
 
@@ -374,6 +428,94 @@
     // Save cache periodically
     saveCacheToStorage();
     chrome.storage.local.set({ stats }).catch(() => {});
+  }
+
+  // Jev mode: ship undecided tweets in batches, several batches in flight, visible tweets first.
+  // Never waits for a previous batch to finish before sending the next one.
+  function pumpBulk() {
+    if (criteria.length === 0 || Date.now() < pausedUntil) return;
+
+    while (tweetQueue.length > 0 && inflightBatches < BULK_MAX_INFLIGHT && isActive) {
+      prioritizeVisibleTweets();
+      const batch = [];
+      while (tweetQueue.length > 0 && batch.length < BULK_SIZE) {
+        const t = tweetQueue.shift();
+        if (tweetCache.has(t.id) || pendingTweets.has(t.id)) continue;
+        if (!t.text || t.text.length <= 10) {
+          // Nothing to judge (image-only tweet): settle it locally, no call needed
+          settleTweet(t, { matchedCriteria: [], scores: {}, engine: 'skipped' });
+          continue;
+        }
+        pendingTweets.add(t.id);
+        batch.push(t);
+      }
+      if (batch.length > 0) sendBatch(batch);
+    }
+  }
+
+  async function sendBatch(batch) {
+    inflightBatches++;
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'ANALYZE_TWEETS_BULK',
+        tweets: batch.map(t => ({ id: t.id, text: t.text, author: t.author || '' })),
+        criteria: criteria.map(c => ({ id: c.id, description: c.description, jevInstruction: c.jevInstruction }))
+      });
+
+      if (response?.error || !response?.results) {
+        batch.forEach(t => handleDecisionFailure(t.id, response?.error || 'no response'));
+        return;
+      }
+
+      for (const t of batch) {
+        const r = response.results[t.id];
+        if (!r || !r.scores || Object.keys(r.scores).length === 0) {
+          handleDecisionFailure(t.id, 'no answer for this tweet');
+          continue;
+        }
+        consecutiveFailures = 0;
+        failedAt.delete(t.id);
+        settleTweet(t, {
+          matchedCriteria: criteria.filter(c => r.matches.includes(c.id)),
+          scores: r.scores,
+          engine: 'jev',
+          refined: Boolean(r.refined)
+        });
+      }
+      chrome.runtime.sendMessage({ type: 'STATS_UPDATE', stats }).catch(() => {});
+    } catch (err) {
+      console.error('[Twitter Analyzer] Bulk decision failed:', err);
+      batch.forEach(t => handleDecisionFailure(t.id, err.message));
+    } finally {
+      batch.forEach(t => pendingTweets.delete(t.id));
+      inflightBatches--;
+      if (inflightBatches === 0 && tweetQueue.length === 0) {
+        saveCacheToStorage();
+        chrome.storage.local.set({ stats }).catch(() => {});
+      }
+      // Whatever arrived meanwhile goes out now
+      if (tweetQueue.length > 0) pumpBulk();
+    }
+  }
+
+  // Record a decision: cache it, draw it, count it
+  function settleTweet(tweet, result) {
+    cacheResult(tweet.id, result);
+
+    let element = document.querySelector(`[data-ta-tweet-id="${tweet.id}"]`);
+    if (!element && document.contains(tweet.element) && getTweetId(tweet.element) === tweet.id) {
+      element = tweet.element;
+    }
+    if (element) applyVisualChanges(element, result, tweet.id);
+
+    stats.analyzed++;
+    if (result.matchedCriteria.length > 0) {
+      if (result.matchedCriteria.some(c => c.actions.hide)) stats.hidden++;
+      else stats.tagged++;
+      for (const c of result.matchedCriteria) {
+        stats.byTopic[c.id] = (stats.byTopic[c.id] || 0) + 1;
+      }
+    }
   }
 
   async function queueWorker() {
@@ -570,8 +712,10 @@
     // No matches - ensure clean state
     if (!result.matchedCriteria || result.matchedCriteria.length === 0) {
       cleanVisuals(element);
+      renderScores(element, result);
       return;
     }
+    renderScores(element, result);
 
     // Process each criteria
     for (const criteriaItem of result.matchedCriteria) {
@@ -626,8 +770,8 @@
             // Show emoji + truncated description
             const emoji = criteriaItem.emoji || '🏷️';
             const text = truncateText(criteriaItem.description, 15);
-            pill.textContent = `${emoji} ${text}`;
             const p = result.scores?.[criteriaItem.id];
+            pill.textContent = Number.isFinite(p) ? `${emoji} ${text} ${Math.round(p * 100)}%` : `${emoji} ${text}`;
             pill.title = Number.isFinite(p)
               ? `${criteriaItem.description} · ${Math.round(p * 100)}% (Jev)`
               : criteriaItem.description;
@@ -643,9 +787,43 @@
     }
   }
 
+  // Jev's probability for EVERY topic, on every decided tweet, matched or not.
+  // This is the raw signal; tags and highlights are just that signal passed through the threshold.
+  function renderScores(element, result) {
+    const existing = element.querySelector('.ta-scores');
+    if (!engine.showScores || !result?.scores) { existing?.remove(); return; }
+    const entries = criteria.filter(c => Number.isFinite(result.scores[c.id]));
+    if (entries.length === 0) { existing?.remove(); return; }
+
+    // Redraw only when something changed, so we do not feed our own MutationObserver
+    const sig = entries.map(c => `${c.id}:${Math.round(result.scores[c.id] * 100)}:${c.emoji}:${c.color}`).join(',');
+    if (existing && existing.dataset.sig === sig) return;
+    existing?.remove();
+
+    const userNameEl = element.querySelector(SELECTORS.userName);
+    const container = userNameEl?.closest('div');
+    if (!container) return;
+
+    const row = document.createElement('span');
+    row.className = 'ta-scores';
+    row.dataset.sig = sig;
+    row.title = entries.map(c => `${c.description}: ${Math.round(result.scores[c.id] * 100)}%`).join('\n')
+      + (result.refined ? '\n(second opinion asked for this tweet)' : '');
+    for (const c of entries) {
+      const p = result.scores[c.id];
+      const chip = document.createElement('span');
+      chip.className = 'ta-score-chip';
+      chip.textContent = `${c.emoji || '🏷️'} ${Math.round(p * 100)}%`;
+      chip.style.setProperty('--ta-score-color', c.color || '#1d9bf0');
+      chip.style.opacity = String(0.35 + 0.65 * p);
+      row.appendChild(chip);
+    }
+    container.appendChild(row);
+  }
+
   // Remove all visual modifications from an element
   function cleanVisuals(element) {
-    element.querySelectorAll('.ta-pill, .ta-highlight-overlay').forEach(el => el.remove());
+    element.querySelectorAll('.ta-pill, .ta-highlight-overlay, .ta-scores').forEach(el => el.remove());
     element.style.removeProperty('display');
     element.classList.remove('ta-hidden', 'ta-highlighted');
     element.style.removeProperty('--ta-highlight-color');

@@ -351,3 +351,23 @@
 .ta-categorize-item:hover {
   background: rgba(29, 155, 240, 0.1) !important;
 }
+
+
+/* Jev's probability for every topic, shown on every decided tweet */
+.ta-scores {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  pointer-events: auto;
+}
+.ta-score-chip {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  border: 1px solid var(--ta-score-color, #1d9bf0);
+  color: inherit;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

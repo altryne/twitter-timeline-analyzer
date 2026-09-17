@@ -1,8 +1,8 @@
 // Background service worker for Twitter Timeline Analyzer
 import * as weave from '../lib/weaveShim.js';
-import { decideTweet, JEV_DEFAULT_MODEL, JEV_DEFAULT_THRESHOLD } from '../lib/jev.js';
+import { decideTweet, decideTweetsHybrid, JEV_DEFAULT_MODEL, JEV_DEFAULT_THRESHOLD } from '../lib/jev.js';
 
-const JEV_SETTING_KEYS = ['jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll'];
+const JEV_SETTING_KEYS = ['jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll', 'jevShowScores'];
 
 // Initialize Weave when settings are available
 async function initWeave() {
@@ -43,6 +43,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(err => {
         console.error('Tweet analysis error:', err);
         sendResponse({ matches: [], error: err.message });
+      });
+    return true;
+  }
+
+  if (message.type === 'ANALYZE_TWEETS_BULK') {
+    analyzeTweetsBulk(message.tweets, message.criteria)
+      .then(result => sendResponse(result))
+      .catch(err => {
+        console.error('Bulk analysis error:', err);
+        sendResponse({ results: {}, error: err.message });
       });
     return true;
   }
@@ -171,6 +181,35 @@ async function analyzeTweetWithJev(tweetText, criteria, author, settings) {
   } catch (err) {
     await weave.endTrace(traceContext, { error: err.message });
     throw err;
+  }
+}
+
+// Bulk decisions with Jev: up to a screenful of tweets in one call, a probability for every
+// (tweet, topic) pair, and a second single-tweet opinion only for uncertain scores.
+async function analyzeTweetsBulk(tweets, criteria) {
+  const settings = await chrome.storage.local.get(JEV_SETTING_KEYS);
+  if (!settings.jevEnabled || !settings.jevApiKey) {
+    return { results: {}, error: 'Jev not configured' };
+  }
+
+  const traceContext = await weave.startTrace('jev_decide_bulk', {
+    tweetCount: tweets.length,
+    criteriaCount: criteria.length
+  });
+  try {
+    const out = await decideTweetsHybrid({
+      apiKey: settings.jevApiKey,
+      model: settings.jevModel || JEV_DEFAULT_MODEL,
+      threshold: Number.isFinite(Number(settings.jevThreshold)) ? Number(settings.jevThreshold) : JEV_DEFAULT_THRESHOLD,
+      tweets,
+      criteria
+    });
+    const result = { results: out.results, engine: 'jev', bulkLatencyMs: out.bulkLatencyMs, refinedCount: out.refinedCount };
+    await weave.endTrace(traceContext, { tweetCount: tweets.length, refinedCount: out.refinedCount, bulkLatencyMs: out.bulkLatencyMs }, { model: out.model, usage: out.usage });
+    return result;
+  } catch (err) {
+    await weave.endTrace(traceContext, { error: err.message });
+    return { results: {}, error: `Jev: ${err.message}` };
   }
 }
 

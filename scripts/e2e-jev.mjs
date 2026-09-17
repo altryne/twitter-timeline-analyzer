@@ -1,5 +1,6 @@
 // End-to-end: load the unpacked extension in Chrome for Testing, serve a mock X timeline at
-// https://x.com/home, let Jev decide every tweet, then read pills, stats and timing.
+// https://x.com/home, let Jev decide every tweet, then stream 120 more tweets through a fast
+// virtualized scroll and check every one of them gets decided. Reads pills, scores, stats, timing.
 //
 // Branded Chrome no longer accepts --load-extension, so this needs Chrome for Testing:
 //   npm install --no-save puppeteer-core
@@ -103,6 +104,34 @@ try {
   })));
   rows.forEach(r => console.log(`  ${r.pills.length ? r.pills.join(' | ').padEnd(34) : '-'.padEnd(34)} ${r.highlighted ? 'HL' : '  '} ${r.text}`));
   console.log(`\n${tweets.length} tweets decided and rendered in ${wallMs} ms from navigation (${(tweets.length / (wallMs / 1000)).toFixed(1)} tweets/s, includes page load)`);
+
+  const scrollStart = Date.now();
+  const total = await page.evaluate(async (seed) => {
+    const timeline = document.querySelector('[aria-label^="Timeline"]');
+    let n = 0;
+    for (let step = 0; step < 20; step++) {
+      for (let k = 0; k < 6; k++) {
+        const [u, t] = seed[(n + 3) % seed.length];
+        const id = 2100000000000001000n + BigInt(n);
+        const a = document.createElement('article');
+        a.setAttribute('data-testid', 'tweet');
+        a.style.cssText = 'border-bottom:1px solid #2f3336;padding:12px;max-width:600px';
+        a.innerHTML = `<div data-testid="User-Name"><div><span>${u}</span> <span>@${u}</span> <a href="/${u}/status/${id}"><time>1m</time></a></div></div><div data-testid="tweetText">${t} (#${n})</div>`;
+        timeline.appendChild(a);
+        n++;
+      }
+      const all = timeline.querySelectorAll('article');
+      for (let k = 0; k < 6 && all.length - k > 30; k++) all[k].remove();   // virtualization
+      window.scrollTo(0, document.body.scrollHeight);
+      await new Promise(r => setTimeout(r, 90));
+    }
+    return n;
+  }, tweets);
+  await new Promise(r => setTimeout(r, 1500));
+  const decided = await sw.evaluate(async () => { const c = (await chrome.storage.local.get(['tweetCache'])).tweetCache; return c ? Object.keys(JSON.parse(c)).filter(k => k !== '__sig').length : 0; });
+  console.log(`FAST SCROLL: ${total} more tweets streamed through a 30-tweet window in ${Date.now() - scrollStart - 1500} ms; decisions cached in total: ${decided} of ${tweets.length + total}`);
+  const chips = await page.evaluate(() => Array.from(document.querySelectorAll('article')).slice(-3).map(a => (a.querySelector('.ta-scores')?.textContent || 'NO SCORES') + ' | ' + a.querySelector('[data-testid="tweetText"]').textContent.slice(0, 40)));
+  chips.forEach(c => console.log('   ', c));
 
   await new Promise(r => setTimeout(r, 600));
   const stats = await sw.evaluate(async () => (await chrome.storage.local.get(['stats'])).stats);

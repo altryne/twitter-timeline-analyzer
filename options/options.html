@@ -433,11 +433,21 @@
             Off: regex patterns match first and Jev only judges what they miss. Regex is instant but falls for keyword traps.
           </div>
         </div>
+
+        <div class="form-group">
+          <label class="toggle-row" for="jevShowScores">
+            <input type="checkbox" id="jevShowScores" checked>
+            Show every topic's probability on every tweet
+          </label>
+          <div class="label-hint" style="margin-top: 6px">
+            Small chips next to the username (for example 🤖 97% · 🏛 2%), on matched and unmatched tweets alike. Tags and highlights still follow the threshold.
+          </div>
+        </div>
       </div>
 
       <div class="info-box">
         <a href="https://typesafe.ai" target="_blank">Jev</a> is a System One model: it cannot write text, it only answers typed questions with calibrated probabilities, in about 150 to 300 ms and for roughly $0.00002 per tweet.
-        Your LLM still writes each topic's criteria (patterns, emoji, and a one-sentence decision rule); Jev then makes the yes/no call on every tweet, 8 tweets at a time. If Jev is unreachable the LLM takes over.
+        Your LLM still writes each topic's criteria (patterns, emoji, and a one-sentence decision rule); Jev then returns a probability for every topic on every tweet. Tweets go out in bulk, 8 per call with several calls in flight, and only uncertain scores get a second single-tweet opinion. If Jev is unreachable the LLM takes over.
       </div>
     </div>
 

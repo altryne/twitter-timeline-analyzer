@@ -98,7 +98,8 @@ How the work is split:
 | Step | Who | When |
 |------|-----|------|
 | Write a topic's regex patterns, emoji, and a one-sentence decision rule ("The tweet is about ...") | Your LLM | Once, when you add a topic (and again when you give feedback) |
-| Decide whether each tweet matches each topic | Jev | Every tweet, one call per tweet with one yes/no (Noul) question per topic |
+| Give a probability for every topic on every tweet | Jev | In bulk: 8 tweets per call, one probability (Noul) question per tweet per topic, several calls in flight |
+| Second opinion | Jev | Only for tweets whose bulk score is uncertain (between 20% and 80%): that tweet is re-asked alone |
 | Turn probabilities into tags, highlights and hides | Extension code | Every tweet, using your match threshold |
 
 Setup:
@@ -114,7 +115,9 @@ Notes:
 
 - Topics you created before enabling Jev get their decision rule written by your LLM in the background the first time Jev is switched on. Until then Jev uses a default rule built from the topic description
 - Expand a topic in the popup to read or edit its **Jev decision rule**. Hover a tag on a tweet to see Jev's probability
-- With Jev on, tweets are decided 8 at a time with visible tweets first. Measured end to end in Chrome: 24 tweets decided and tagged in under a second
+- Every decided tweet shows a chip per topic with Jev's probability (for example `🤖 97%  🏛 2%`), matched or not. Tags and highlights are that same signal passed through your threshold. Switch the chips off with **Show every topic's probability on every tweet**
+- A sweeper looks for undecided tweets every 400 ms and on every scroll or timeline change, so tweets that fly past during a long scroll still get decided. Measured in Chrome: 120 tweets streamed through a fast virtualized scroll in under two seconds, all 144 on the page decided
+- Why bulk plus second opinions: packing tweets into one call is about 3x faster and uses fewer tokens, but it pulls borderline probabilities toward the middle (69/72 correct on the labelled set at 8 per call). Re-asking only the uncertain ones restores 72/72 while keeping most of the speed. Reproduce with `scripts/test-jev-bulk.mjs`
 - If Jev is unreachable, the extension falls back to your LLM for that tweet
 - The manifest includes the `https://api.typesafe.ai/*` host permission. It is required: the API does not answer CORS preflights from extension origins, so calls go through the background service worker
 
@@ -123,6 +126,9 @@ Testing without Twitter:
 ```bash
 # Live accuracy and speed check of lib/jev.js (needs TYPESAFE_API_KEY in an env file)
 node --env-file=path/to/.env scripts/test-jev.mjs
+
+# Bulk batch sizes vs accuracy, and the bulk + second opinion hybrid
+node --env-file=path/to/.env scripts/test-jev-bulk.mjs
 
 # Full end-to-end run in Chrome for Testing against a mock timeline (see the header of the script)
 node --env-file=path/to/.env scripts/e2e-jev.mjs

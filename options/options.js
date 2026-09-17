@@ -43,7 +43,7 @@ let currentPreset = null;
 document.addEventListener('DOMContentLoaded', async () => {
   // Load saved settings
   const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', 'preset', 'wandbApiKey', 'wandbProject',
-    'jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll']);
+    'jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll', 'jevShowScores']);
 
   // Jev decision engine
   document.getElementById('jevEnabled').checked = Boolean(settings.jevEnabled);
@@ -52,6 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('jevThreshold').value = Number.isFinite(Number(settings.jevThreshold)) && settings.jevThreshold !== undefined
     ? settings.jevThreshold : 0.5;
   document.getElementById('jevDecideAll').checked = settings.jevDecideAll !== false;
+  document.getElementById('jevShowScores').checked = settings.jevShowScores !== false;
   syncJevUi();
 
   document.getElementById('jevEnabled').addEventListener('change', syncJevUi);
@@ -323,7 +324,8 @@ function readJevSettings() {
     jevApiKey: document.getElementById('jevApiKey').value.trim(),
     jevModel: document.getElementById('jevModel').value.trim() || 'jev-latest',
     jevThreshold: Number(document.getElementById('jevThreshold').value),
-    jevDecideAll: document.getElementById('jevDecideAll').checked
+    jevDecideAll: document.getElementById('jevDecideAll').checked,
+    jevShowScores: document.getElementById('jevShowScores').checked
   };
 }
 
