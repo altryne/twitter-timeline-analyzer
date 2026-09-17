@@ -1,5 +1,8 @@
 // Background service worker for Twitter Timeline Analyzer
 import * as weave from '../lib/weaveShim.js';
+import { decideTweet, JEV_DEFAULT_MODEL, JEV_DEFAULT_THRESHOLD } from '../lib/jev.js';
+
+const JEV_SETTING_KEYS = ['jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll'];
 
 // Initialize Weave when settings are available
 async function initWeave() {
@@ -15,7 +18,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && (changes.wandbApiKey || changes.wandbProject)) {
     initWeave();
   }
+  // When Jev gets switched on, have the LLM write decision criteria for topics that lack them
+  if (area === 'local' && (changes.jevEnabled?.newValue || changes.jevApiKey?.newValue)) {
+    backfillJevInstructions();
+  }
 });
+backfillJevInstructions();
 
 // Message handling
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -30,7 +38,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'ANALYZE_TWEET') {
-    analyzeTweet(message.tweetText, message.criteria)
+    analyzeTweet(message.tweetText, message.criteria, message.author)
       .then(result => sendResponse(result))
       .catch(err => {
         console.error('Tweet analysis error:', err);
@@ -40,8 +48,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'GET_SETTINGS') {
-    chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model'])
-      .then(settings => sendResponse(settings));
+    chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', ...JEV_SETTING_KEYS])
+      .then(settings => {
+        // Never hand API keys to the content script; it only needs to know what is on
+        const { apiKey, jevApiKey, ...rest } = settings;
+        sendResponse({ ...rest, llmConfigured: Boolean(apiKey), jevConfigured: Boolean(settings.jevEnabled && jevApiKey) });
+      });
     return true;
   }
 
@@ -70,6 +82,7 @@ async function generatePatternsAndEmoji(description) {
   const systemPrompt = `You are a topic analyzer. Given a topic description, generate:
 1. 3-8 regex patterns that would match tweets about that topic
 2. A single emoji that best represents this topic
+3. A decision criterion: ONE declarative sentence a fast yes/no classifier will judge each tweet against
 
 Rules for patterns:
 - Generate patterns that are case-insensitive (will be used with /i flag)
@@ -82,14 +95,20 @@ Rules for emoji:
 - Choose ONE emoji that best visually represents the topic
 - Be specific - for "AI" use 🤖, for "politics" use 🏛️, for "sports" use ⚽, etc.
 
+Rules for the decision criterion:
+- Start with "The tweet is about" and state the topic precisely
+- Name what counts (entities, subtopics, typical phrasing) and, if the topic has an obvious false friend, what does NOT count
+- One sentence, under 40 words, no questions, no instructions to the reader
+
 Return ONLY a JSON object with this exact structure, nothing else:
 {
   "patterns": ["pattern1", "pattern2", ...],
-  "emoji": "🎯"
+  "emoji": "🎯",
+  "jevInstruction": "The tweet is about ..."
 }
 
 Example input: "AI and machine learning discussions"
-Example output: {"patterns": ["\\\\bAI\\\\b", "\\\\bartificial intelligence\\\\b", "\\\\bmachine learning\\\\b", "\\\\bML\\\\b", "\\\\bdeep learning\\\\b", "#MachineLearning", "#AI\\\\b", "\\\\bGPT", "\\\\bLLM\\\\b"], "emoji": "🤖"}`;
+Example output: {"patterns": ["\\\\bAI\\\\b", "\\\\bartificial intelligence\\\\b", "\\\\bmachine learning\\\\b", "\\\\bML\\\\b", "\\\\bdeep learning\\\\b", "#MachineLearning", "#AI\\\\b", "\\\\bGPT", "\\\\bLLM\\\\b"], "emoji": "🤖", "jevInstruction": "The tweet is about artificial intelligence: AI models, labs, research, agents, or AI products and tools, not the movie or unrelated uses of the letters AI."}`;
 
   try {
     const response = await callLLM(settings, systemPrompt, `Analyze this topic: "${description}"`, traceContext);
@@ -114,7 +133,11 @@ Example output: {"patterns": ["\\\\bAI\\\\b", "\\\\bartificial intelligence\\\\b
         ? result.emoji
         : null;
 
-      const output = { patterns, emoji };
+      const jevInstruction = typeof result.jevInstruction === 'string' && result.jevInstruction.trim().length > 0
+        ? result.jevInstruction.trim()
+        : null;
+
+      const output = { patterns, emoji, jevInstruction };
       await weave.endTrace(traceContext, output);
       return output;
     }
@@ -127,12 +150,47 @@ Example output: {"patterns": ["\\\\bAI\\\\b", "\\\\bartificial intelligence\\\\b
   return { patterns: [], emoji: null };
 }
 
-// Analyze a tweet against criteria using LLM
-async function analyzeTweet(tweetText, criteria) {
-  const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model']);
+// Decide with Jev (TypeSafe System One): one call per tweet, one yes/no question per topic
+async function analyzeTweetWithJev(tweetText, criteria, author, settings) {
+  const traceContext = await weave.startTrace('jev_decide_tweet', {
+    tweetText: tweetText.substring(0, 200),
+    criteriaCount: criteria.length
+  });
+  try {
+    const result = await decideTweet({
+      apiKey: settings.jevApiKey,
+      model: settings.jevModel || JEV_DEFAULT_MODEL,
+      threshold: Number.isFinite(Number(settings.jevThreshold)) ? Number(settings.jevThreshold) : JEV_DEFAULT_THRESHOLD,
+      tweetText,
+      author,
+      criteria
+    });
+    const output = { matches: result.matches, scores: result.scores, engine: 'jev', latencyMs: result.latencyMs };
+    await weave.endTrace(traceContext, output, { model: result.model, usage: result.usage });
+    return output;
+  } catch (err) {
+    await weave.endTrace(traceContext, { error: err.message });
+    throw err;
+  }
+}
+
+// Analyze a tweet against criteria. Jev decides when enabled; the LLM is the fallback.
+async function analyzeTweet(tweetText, criteria, author = '') {
+  const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', ...JEV_SETTING_KEYS]);
+
+  let jevError = null;
+  if (settings.jevEnabled && settings.jevApiKey) {
+    try {
+      return await analyzeTweetWithJev(tweetText, criteria, author, settings);
+    } catch (err) {
+      console.error('Jev decision failed, falling back to LLM:', err);
+      jevError = err.message;
+    }
+  }
 
   if (!settings.apiKey || !settings.apiBaseUrl || !settings.model) {
-    return { matches: [], error: 'API not configured' };
+    // Report the engine that actually failed, not the missing fallback
+    return { matches: [], error: jevError ? `Jev: ${jevError}` : 'API not configured' };
   }
 
   // Start parent trace for this operation
@@ -167,17 +225,72 @@ Example output: ["abc123", "def456"]`;
       // Validate that returned IDs exist in criteria
       const validIds = new Set(criteria.map(c => c.id));
       const validMatches = matches.filter(id => validIds.has(id));
-      const output = { matches: validMatches };
+      const output = { matches: validMatches, engine: 'llm' };
       await weave.endTrace(traceContext, output);
       return output;
     }
   } catch (err) {
     console.error('Failed to parse analysis:', err);
     await weave.endTrace(traceContext, { error: err.message });
+    // A provider error (402 out of credits, 401 bad key, 429) is a failed decision, not a "no match"
+    if (!(err instanceof SyntaxError)) {
+      return { matches: [], error: err.message, engine: 'llm' };
+    }
   }
 
   await weave.endTrace(traceContext, { matches: [] });
   return { matches: [] };
+}
+
+// Have the LLM write a Jev decision criterion for one topic
+async function generateJevInstruction(description, settings, extraContext = '') {
+  const systemPrompt = `You write decision criteria for a fast yes/no tweet classifier.
+Given a topic, return ONE declarative sentence the classifier will judge each tweet against.
+
+Rules:
+- Start with "The tweet is about" and state the topic precisely
+- Name what counts (entities, subtopics, typical phrasing) and, if the topic has an obvious false friend, what does NOT count
+- One sentence, under 40 words, no questions, no instructions to the reader
+
+Return ONLY a JSON object: {"jevInstruction": "The tweet is about ..."}`;
+  const response = await callLLM(settings, systemPrompt, `Topic: "${description}"${extraContext}`);
+  const cleaned = response.trim().replace(/```json\n?|\n?```/g, '');
+  const parsed = JSON.parse(cleaned);
+  return typeof parsed.jevInstruction === 'string' ? parsed.jevInstruction.trim() : null;
+}
+
+// Topics created before Jev was enabled have no decision criterion yet: write them once
+let backfillInFlight = false;
+async function backfillJevInstructions() {
+  if (backfillInFlight) return;
+  backfillInFlight = true;
+  try {
+    const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', 'criteria', 'jevEnabled', 'jevApiKey']);
+    if (!settings.jevEnabled || !settings.jevApiKey) return;
+    if (!settings.apiKey || !settings.apiBaseUrl || !settings.model) return;
+
+    const missing = (settings.criteria || []).filter(c => !c.jevInstruction && !c.generating);
+    if (missing.length === 0) return;
+
+    const written = {};
+    for (const topic of missing) {
+      try {
+        const instruction = await generateJevInstruction(topic.description, settings);
+        if (instruction) written[topic.id] = instruction;
+      } catch (err) {
+        console.error(`Failed to write Jev criterion for topic ${topic.id}:`, err);
+      }
+    }
+
+    if (Object.keys(written).length > 0) {
+      // Re-read so edits made while the LLM was working are not clobbered
+      const fresh = await chrome.storage.local.get(['criteria']);
+      const criteria = (fresh.criteria || []).map(c => written[c.id] && !c.jevInstruction ? { ...c, jevInstruction: written[c.id] } : c);
+      await chrome.storage.local.set({ criteria });
+    }
+  } finally {
+    backfillInFlight = false;
+  }
 }
 
 // Generic LLM API call with Weave tracing
@@ -242,6 +355,7 @@ async function learnFromFeedback(tweetText, selectedTopicIds, userComment) {
   });
 
   const updatedCriteria = [];
+  const instructionUpdates = [];
 
   for (const topic of selectedTopics) {
     const existingPatterns = topic.regexPatterns || [];
@@ -261,10 +375,14 @@ Your task:
 5. Patterns should be case-insensitive (will use /i flag)
 6. Use word boundaries (\\b) where appropriate
 
+7. Also rewrite the topic's decision criterion so a yes/no classifier would say yes to this tweet and similar ones: ONE declarative sentence starting with "The tweet is about", under 45 words, keeping what the current criterion already covers
+Current decision criterion: ${JSON.stringify(topic.jevInstruction || `The tweet is about ${topic.description}`)}
+
 Return ONLY a JSON object with this structure:
 {
   "analysis": "Brief explanation of why existing patterns missed this",
-  "newPatterns": ["pattern1", "pattern2", ...]
+  "newPatterns": ["pattern1", "pattern2", ...],
+  "jevInstruction": "The tweet is about ..."
 }`;
 
     const userMessage = `Tweet that should match "${topic.description}":\n"${tweetText}"`;
@@ -273,6 +391,18 @@ Return ONLY a JSON object with this structure:
       const response = await callLLM(settings, systemPrompt, userMessage, traceContext);
       const cleaned = response.trim().replace(/```json\n?|\n?```/g, '');
       const result = JSON.parse(cleaned);
+
+      // Refined Jev criterion: saved even when no new regex patterns survive validation
+      const refinedInstruction = result && typeof result.jevInstruction === 'string' && result.jevInstruction.trim().length > 0
+        ? result.jevInstruction.trim()
+        : null;
+      if (refinedInstruction) {
+        const topicIdx = criteria.findIndex(c => c.id === topic.id);
+        if (topicIdx !== -1 && criteria[topicIdx].jevInstruction !== refinedInstruction) {
+          criteria[topicIdx].jevInstruction = refinedInstruction;
+          instructionUpdates.push({ id: topic.id, jevInstruction: refinedInstruction });
+        }
+      }
 
       if (result && Array.isArray(result.newPatterns)) {
         // Normalize existing patterns to check for duplicates
@@ -324,19 +454,38 @@ Return ONLY a JSON object with this structure:
   }
 
   // Save updated criteria
-  if (updatedCriteria.length > 0) {
+  if (updatedCriteria.length > 0 || instructionUpdates.length > 0) {
     await chrome.storage.local.set({ criteria });
   }
 
   const result = {
     success: true,
     updatedCriteria,
+    instructionUpdates,
     message: `Learned ${updatedCriteria.reduce((sum, c) => sum + (c.newPatternsCount || 0), 0)} new patterns`
   };
 
   await weave.endTrace(traceContext, result);
   return result;
 }
+
+// After an install, update or reload, X tabs that were already open still hold the old, now dead
+// content script and would silently do nothing until refreshed. Put the fresh one in.
+chrome.runtime.onInstalled.addListener(async () => {
+  try {
+    const tabs = await chrome.tabs.query({ url: ['https://twitter.com/*', 'https://x.com/*'] });
+    for (const tab of tabs) {
+      try {
+        await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content/content.css'] });
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/content.js'] });
+      } catch (err) {
+        // Tab not injectable (discarded, error page): it gets the script on its next load
+      }
+    }
+  } catch (err) {
+    console.error('Failed to re-inject content script:', err);
+  }
+});
 
 // Handle extension icon click - ensure content script is ready
 chrome.action.onClicked.addListener(async (tab) => {

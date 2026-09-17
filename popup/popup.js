@@ -2,7 +2,7 @@
 let criteria = [];
 let isActive = false;
 let currentTabId = null;
-let stats = { analyzed: 0, tagged: 0, hidden: 0 };
+let stats = { analyzed: 0, tagged: 0, hidden: 0, byTopic: {} };
 
 // Current topic customization state
 let selectedEmoji = '🏷️';
@@ -47,9 +47,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadState();
 
   // Check API configuration
-  const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model']);
+  const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', 'jevEnabled', 'jevApiKey']);
   if (!settings.apiKey) {
-    document.getElementById('apiWarning').style.display = 'block';
+    const warning = document.getElementById('apiWarning');
+    warning.style.display = 'block';
+    // With Jev on, tweets still get decided; the LLM is only missing for writing topic criteria
+    if (settings.jevEnabled && settings.jevApiKey) {
+      const link = warning.querySelector('a');
+      warning.textContent = 'Jev is deciding tweets. Add an LLM key so new topics get a written decision rule. ';
+      if (link) warning.appendChild(link);
+    }
   }
 
   // Set up event listeners
@@ -73,6 +80,7 @@ async function loadState() {
   criteria = data.criteria || [];
   isActive = data.isActive || false;
   stats = data.stats || { analyzed: 0, tagged: 0, hidden: 0 };
+  if (!stats.byTopic) stats.byTopic = {};
 }
 
 async function saveState() {
@@ -258,6 +266,10 @@ async function addCriteria() {
           isLearned: false
         }));
       }
+      // The LLM's one-sentence decision rule: this is what Jev judges every tweet against
+      if (response?.jevInstruction) {
+        criteria[idx].jevInstruction = response.jevInstruction;
+      }
       // Use LLM-suggested emoji if available and user hadn't changed from default
       if (response?.emoji && currentEmoji === '🏷️') {
         criteria[idx].emoji = response.emoji;
@@ -321,6 +333,10 @@ function renderCriteria() {
         </span>
         <button class="criteria-delete" data-id="${c.id}">&times;</button>
       </div>
+      <div class="criteria-share" data-share-id="${c.id}" title="Share of the tweets you have scrolled past that match this topic">
+        <div class="share-bar"><div class="share-fill" style="width: ${topicShare(c.id).pct}%"></div></div>
+        <span class="share-text">${shareLabel(c.id)}</span>
+      </div>
       <div class="criteria-actions">
         <button class="action-toggle ${c.actions.tag ? 'active' : ''}" data-action="tag" data-id="${c.id}" style="--toggle-color: ${c.color}">
           Tag
@@ -344,6 +360,11 @@ function renderCriteria() {
             <input type="color" class="criteria-color-input" data-id="${c.id}" value="${c.color || '#1d9bf0'}">
           </div>
           <button class="criteria-save-btn" data-id="${c.id}">Save</button>
+        </div>
+
+        <div class="criteria-edit-field criteria-jev-field">
+          <label>Jev decision rule <span class="jev-hint">written by the LLM, judged by Jev on every tweet. Edit and Save to sharpen it.</span></label>
+          <textarea class="criteria-jev-input" data-id="${c.id}" rows="3" placeholder="The tweet is about ...">${escapeHtml(c.jevInstruction || '')}</textarea>
         </div>
 
         <div class="rules-section">
@@ -441,6 +462,13 @@ async function saveCriteriaEdit(id) {
   criteria[idx].emoji = newEmoji;
   criteria[idx].color = newColor;
 
+  const jevInput = item.querySelector('.criteria-jev-input');
+  if (jevInput) {
+    const rule = jevInput.value.trim();
+    if (rule) criteria[idx].jevInstruction = rule;
+    else delete criteria[idx].jevInstruction;
+  }
+
   await saveState();
   renderCriteria();
   notifyContentScript();
@@ -498,11 +526,88 @@ function notifyContentScript() {
   }).catch(() => {});
 }
 
+// Share of seen tweets that matched a topic: how much of the For You feed it has taken over
+function topicShare(id) {
+  const count = stats.byTopic?.[id] || 0;
+  const seen = stats.analyzed || 0;
+  const pct = seen > 0 ? Math.min(100, (count / seen) * 100) : 0;
+  return { count, seen, pct };
+}
+
+function shareLabel(id) {
+  const { count, seen, pct } = topicShare(id);
+  if (seen === 0) return 'no tweets seen yet';
+  const shown = pct > 0 && pct < 1 ? '<1' : Math.round(pct);
+  return `${count} ${count === 1 ? 'tweet' : 'tweets'} · ${shown}% of seen`;
+}
+
+// Update the share bars in place so an open topic editor is not re-rendered under the user
+function updateShares() {
+  document.querySelectorAll('.criteria-share').forEach(el => {
+    const id = el.dataset.shareId;
+    const fill = el.querySelector('.share-fill');
+    const text = el.querySelector('.share-text');
+    if (fill) fill.style.width = `${topicShare(id).pct}%`;
+    if (text) text.textContent = shareLabel(id);
+  });
+
+  const takeover = document.getElementById('takeover');
+  if (!takeover) return;
+  const ranked = criteria
+    .map(c => ({ c, ...topicShare(c.id) }))
+    .filter(t => t.count > 0)
+    .sort((a, b) => b.count - a.count);
+  if (ranked.length === 0 || !stats.analyzed) {
+    takeover.textContent = '';
+    return;
+  }
+  const top = ranked[0];
+  takeover.textContent = `${top.c.emoji || '🏷️'} ${truncateText(top.c.description, 28)} is ${Math.round(top.pct)}% of the ${stats.analyzed} tweets you have seen`;
+}
+
 function updateStatsDisplay() {
   document.getElementById('tweetsAnalyzed').textContent = stats.analyzed;
   document.getElementById('tweetsTagged').textContent = stats.tagged;
   document.getElementById('tweetsHidden').textContent = stats.hidden;
+  updateShares();
 }
+
+async function resetStats() {
+  stats = { analyzed: 0, tagged: 0, hidden: 0, byTopic: {} };
+  await chrome.storage.local.set({ stats });
+  updateStatsDisplay();
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: 'RESET_STATS' });
+  } catch {
+    // No content script on this tab
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('resetStatsBtn')?.addEventListener('click', resetStats);
+});
+
+// The background worker writes Jev decision rules for older topics: keep our copy current
+// so a later save from the popup does not overwrite them with stale criteria.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.criteria?.newValue) return;
+  const byId = new Map(changes.criteria.newValue.map(c => [c.id, c]));
+  let changed = false;
+  criteria.forEach(c => {
+    const fresh = byId.get(c.id);
+    if (fresh && fresh.jevInstruction && fresh.jevInstruction !== c.jevInstruction) {
+      c.jevInstruction = fresh.jevInstruction;
+      changed = true;
+    }
+  });
+  if (changed) {
+    document.querySelectorAll('.criteria-jev-input').forEach(el => {
+      const c = criteria.find(x => x.id === el.dataset.id);
+      if (c && document.activeElement !== el) el.value = c.jevInstruction || '';
+    });
+  }
+});
 
 function escapeHtml(text) {
   const div = document.createElement('div');

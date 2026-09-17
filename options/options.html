@@ -259,6 +259,56 @@
     .refresh-btn svg {
       flex-shrink: 0;
     }
+
+    /* Jev decision engine section */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .toggle-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #1d9bf0;
+      cursor: pointer;
+    }
+    .range-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .range-row input[type="range"] {
+      flex: 1;
+      accent-color: #1d9bf0;
+    }
+    .range-value {
+      min-width: 44px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+    .inline-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .secondary-btn {
+      padding: 10px 16px;
+      border-radius: 9999px;
+      border: 1px solid #536471;
+      background: transparent;
+      color: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .secondary-btn:disabled { opacity: 0.5; cursor: default; }
+    .jev-test-result { font-size: 13px; margin-top: 8px; min-height: 18px; }
+    .jev-test-result.ok { color: #00ba7c; }
+    .jev-test-result.error { color: #f4212e; }
+    #jevFields.disabled { opacity: 0.45; pointer-events: none; }
   </style>
 </head>
 <body>
@@ -321,6 +371,73 @@
 
       <div class="info-box" id="providerInfo">
         Select a provider above to see setup instructions.
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Decision Engine: Jev <span class="label-hint">(optional, recommended)</span></h2>
+
+      <div class="form-group">
+        <label class="toggle-row" for="jevEnabled">
+          <input type="checkbox" id="jevEnabled">
+          Let Jev decide which tweets match
+        </label>
+      </div>
+
+      <div id="jevFields">
+        <div class="form-group">
+          <label for="jevApiKey">
+            TypeSafe API Key
+            <span class="label-hint">(from console.typesafe.ai)</span>
+          </label>
+          <div class="inline-row">
+            <div class="password-wrapper" style="flex: 1">
+              <input type="password" id="jevApiKey" placeholder="TypeSafe API key">
+              <button type="button" class="toggle-password" id="toggleJevPassword">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+            <button type="button" class="secondary-btn" id="testJevBtn">Test</button>
+          </div>
+          <div class="jev-test-result" id="jevTestResult"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="jevModel">
+            Model
+            <span class="label-hint">(jev-latest tracks the newest release)</span>
+          </label>
+          <input type="text" id="jevModel" placeholder="jev-latest">
+        </div>
+
+        <div class="form-group">
+          <label for="jevThreshold">
+            Match threshold
+            <span class="label-hint">(a tweet matches a topic when Jev's probability is at or above this)</span>
+          </label>
+          <div class="range-row">
+            <input type="range" id="jevThreshold" min="0.2" max="0.95" step="0.05" value="0.5">
+            <span class="range-value" id="jevThresholdValue">50%</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="toggle-row" for="jevDecideAll">
+            <input type="checkbox" id="jevDecideAll" checked>
+            Jev decides every tweet (skip regex)
+          </label>
+          <div class="label-hint" style="margin-top: 6px">
+            Off: regex patterns match first and Jev only judges what they miss. Regex is instant but falls for keyword traps.
+          </div>
+        </div>
+      </div>
+
+      <div class="info-box">
+        <a href="https://typesafe.ai" target="_blank">Jev</a> is a System One model: it cannot write text, it only answers typed questions with calibrated probabilities, in about 150 to 300 ms and for roughly $0.00002 per tweet.
+        Your LLM still writes each topic's criteria (patterns, emoji, and a one-sentence decision rule); Jev then makes the yes/no call on every tweet, 8 tweets at a time. If Jev is unreachable the LLM takes over.
       </div>
     </div>
 

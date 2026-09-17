@@ -30,3 +30,7 @@ dist/
 .trae/
 .windsurf/
 skills/
+
+# local test tooling
+.browsers/
+node_modules/

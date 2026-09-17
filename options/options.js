@@ -42,7 +42,25 @@ let currentPreset = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Load saved settings
-  const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', 'preset', 'wandbApiKey', 'wandbProject']);
+  const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', 'preset', 'wandbApiKey', 'wandbProject',
+    'jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll']);
+
+  // Jev decision engine
+  document.getElementById('jevEnabled').checked = Boolean(settings.jevEnabled);
+  document.getElementById('jevApiKey').value = settings.jevApiKey || '';
+  document.getElementById('jevModel').value = settings.jevModel || '';
+  document.getElementById('jevThreshold').value = Number.isFinite(Number(settings.jevThreshold)) && settings.jevThreshold !== undefined
+    ? settings.jevThreshold : 0.5;
+  document.getElementById('jevDecideAll').checked = settings.jevDecideAll !== false;
+  syncJevUi();
+
+  document.getElementById('jevEnabled').addEventListener('change', syncJevUi);
+  document.getElementById('jevThreshold').addEventListener('input', syncJevUi);
+  document.getElementById('toggleJevPassword').addEventListener('click', () => {
+    const input = document.getElementById('jevApiKey');
+    input.type = input.type === 'password' ? 'text' : 'password';
+  });
+  document.getElementById('testJevBtn').addEventListener('click', testJev);
 
   if (settings.apiKey) {
     document.getElementById('apiKey').value = settings.apiKey;
@@ -292,7 +310,63 @@ async function refreshModels() {
   btn.textContent = originalText;
 }
 
+function syncJevUi() {
+  const enabled = document.getElementById('jevEnabled').checked;
+  document.getElementById('jevFields').classList.toggle('disabled', !enabled);
+  const threshold = Number(document.getElementById('jevThreshold').value);
+  document.getElementById('jevThresholdValue').textContent = `${Math.round(threshold * 100)}%`;
+}
+
+function readJevSettings() {
+  return {
+    jevEnabled: document.getElementById('jevEnabled').checked,
+    jevApiKey: document.getElementById('jevApiKey').value.trim(),
+    jevModel: document.getElementById('jevModel').value.trim() || 'jev-latest',
+    jevThreshold: Number(document.getElementById('jevThreshold').value),
+    jevDecideAll: document.getElementById('jevDecideAll').checked
+  };
+}
+
+// One real Jev decision, so the key, the model name and the latency are all verified
+async function testJev() {
+  const out = document.getElementById('jevTestResult');
+  const btn = document.getElementById('testJevBtn');
+  const { jevApiKey, jevModel } = readJevSettings();
+  if (!jevApiKey) {
+    out.className = 'jev-test-result error';
+    out.textContent = 'Enter a TypeSafe API key first';
+    return false;
+  }
+  btn.disabled = true;
+  out.className = 'jev-test-result';
+  out.textContent = 'Asking Jev...';
+  try {
+    const { testConnection } = await import('../lib/jev.js');
+    const result = await testConnection({ apiKey: jevApiKey, model: jevModel });
+    out.className = 'jev-test-result ok';
+    out.textContent = `Connected to ${result.model}: decided in ${result.latencyMs} ms (test tweet scored ${Math.round(result.score * 100)}% for "AI")`;
+    return true;
+  } catch (err) {
+    out.className = 'jev-test-result error';
+    out.textContent = `Jev test failed: ${err.message}`;
+    return false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function saveSettings() {
+  // Jev settings save on their own, so a flaky LLM provider cannot block them
+  const jev = readJevSettings();
+  if (jev.jevEnabled) {
+    const ok = await testJev();
+    if (!ok) {
+      showStatus('Jev is enabled but the connection test failed. Fix the key or switch Jev off.', 'error');
+      return;
+    }
+  }
+  await chrome.storage.local.set(jev);
+
   const apiKey = document.getElementById('apiKey').value.trim();
   const apiBaseUrl = document.getElementById('apiBaseUrl').value.trim();
   const model = document.getElementById('model').value;
@@ -350,7 +424,10 @@ async function saveSettings() {
 
     showStatus('Settings saved successfully!', 'success');
   } catch (err) {
-    showStatus(`Connection failed: ${err.message}`, 'error');
+    // Say which connection failed: Jev settings were already saved above
+    const hint = /402/.test(err.message) ? ' (the provider says payment required: out of credits?)' : '';
+    const prefix = jev.jevEnabled ? 'Jev settings saved and working. ' : '';
+    showStatus(`${prefix}LLM connection failed: ${err.message}${hint}. The LLM is only needed to write rules for new topics.`, 'error');
   }
 
   btn.disabled = false;

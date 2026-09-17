@@ -15,6 +15,8 @@ A Chrome extension that uses AI to analyze and filter your Twitter/X timeline ba
 - **Learning from Feedback**: Manually categorize tweets to improve pattern matching over time
 - **Visual Actions**: Tag, highlight, or hide tweets based on topics
 - **Multiple LLM Providers**: Works with any OpenAI-compatible API (Cerebras, Groq, OpenAI, Together AI, OpenRouter, etc.)
+- **Jev Decision Engine (optional)**: Let [TypeSafe's Jev](https://typesafe.ai), a System One model, make the per-tweet yes/no calls. Your LLM writes each topic's criteria once; Jev judges every tweet against them in ~150-300 ms for about $0.00002 per tweet
+- **Timeline Takeover Tracking**: Every topic shows how many tweets matched and what percent of the tweets you have seen it accounts for, so you can see how hard the For You algorithm is leaning on one subject
 - **Weave Observability**: Optional [W&B Weave](https://docs.wandb.ai/weave/) integration for tracing LLM calls
 
 ## Installation
@@ -87,6 +89,45 @@ POST /chat/completions
 }
 ```
 
+### Enabling Jev as the Decision Engine (Optional, Recommended)
+
+Classifying every tweet with an LLM is slow and adds up. [Jev](https://docs.typesafe.ai/introduction) is a different kind of model: it cannot generate text, it only answers typed questions with calibrated probabilities. That is exactly the shape of this job.
+
+How the work is split:
+
+| Step | Who | When |
+|------|-----|------|
+| Write a topic's regex patterns, emoji, and a one-sentence decision rule ("The tweet is about ...") | Your LLM | Once, when you add a topic (and again when you give feedback) |
+| Decide whether each tweet matches each topic | Jev | Every tweet, one call per tweet with one yes/no (Noul) question per topic |
+| Turn probabilities into tags, highlights and hides | Extension code | Every tweet, using your match threshold |
+
+Setup:
+
+1. Get an API key from [console.typesafe.ai](https://console.typesafe.ai/settings/keys)
+2. In extension settings, open **Decision Engine: Jev**, tick **Let Jev decide which tweets match**, paste the key
+3. Click **Test**: it makes one real decision and shows the model version and latency
+4. Pick a **match threshold** (default 50%). Higher means fewer, surer tags
+5. Leave **Jev decides every tweet (skip regex)** on unless you want regex to match first. Regex is instant but falls for keyword traps ("Apple pie", "Transformers 7") that Jev scores near 0%
+6. Save
+
+Notes:
+
+- Topics you created before enabling Jev get their decision rule written by your LLM in the background the first time Jev is switched on. Until then Jev uses a default rule built from the topic description
+- Expand a topic in the popup to read or edit its **Jev decision rule**. Hover a tag on a tweet to see Jev's probability
+- With Jev on, tweets are decided 8 at a time with visible tweets first. Measured end to end in Chrome: 24 tweets decided and tagged in under a second
+- If Jev is unreachable, the extension falls back to your LLM for that tweet
+- The manifest includes the `https://api.typesafe.ai/*` host permission. It is required: the API does not answer CORS preflights from extension origins, so calls go through the background service worker
+
+Testing without Twitter:
+
+```bash
+# Live accuracy and speed check of lib/jev.js (needs TYPESAFE_API_KEY in an env file)
+node --env-file=path/to/.env scripts/test-jev.mjs
+
+# Full end-to-end run in Chrome for Testing against a mock timeline (see the header of the script)
+node --env-file=path/to/.env scripts/e2e-jev.mjs
+```
+
 ### Enabling Weave Observability (Optional)
 
 [W&B Weave](https://docs.wandb.ai/weave/) provides tracing and observability for LLM calls, letting you debug prompts, track token usage, and analyze latency.
@@ -120,10 +161,10 @@ Learn more: [Weave Documentation](https://docs.wandb.ai/weave/)
 
 ### How It Works
 
-1. When you add a topic, the LLM generates regex patterns for fast matching
+1. When you add a topic, the LLM generates regex patterns, an emoji, and a one-sentence decision rule
 2. As you scroll, tweets are analyzed:
-   - First, regex patterns are tested (instant)
-   - If no regex match, the LLM analyzes the tweet content
+   - With Jev enabled: Jev judges every tweet against every topic's decision rule (8 tweets in parallel)
+   - Without Jev: regex patterns are tested first (instant), and if nothing matches the LLM analyzes the tweet
 3. Matching tweets are modified based on your action preferences
 4. Results are cached for instant display when scrolling back
 

@@ -12,7 +12,20 @@
   let pendingTweets = new Set(); // tweet IDs currently being processed
   let tweetQueue = [];
   let isProcessing = false;
-  let stats = { analyzed: 0, tagged: 0, hidden: 0 };
+  let stats = { analyzed: 0, tagged: 0, hidden: 0, byTopic: {} };
+
+  // Decision engine. With Jev on, the LLM only writes criteria; Jev decides every tweet.
+  let engine = { jev: false, decideAll: true, signature: '' };
+
+  // Failed decisions are never cached (a dead API key must not turn into "matches nothing").
+  // They are retried after a pause, and the error is shown once instead of failing silently.
+  const failedAt = new Map(); // tweetId -> timestamp of last failed decision
+  const RETRY_AFTER_MS = 30000;
+  let consecutiveFailures = 0;
+  let pausedUntil = 0;
+  let lastErrorShownAt = 0;
+  const JEV_CONCURRENCY = 8;  // Jev answers in ~150-300ms, so run tweets in parallel
+  const LLM_CONCURRENCY = 1;  // LLM path stays serial to respect provider rate limits
 
   // Cache settings
   const CACHE_MAX_SIZE = 500;
@@ -39,15 +52,23 @@
     criteria = data.criteria || [];
     isActive = data.isActive || false;
     stats = data.stats || { analyzed: 0, tagged: 0, hidden: 0 };
+    if (!stats.byTopic) stats.byTopic = {};
+
+    await loadEngineSettings();
+    chrome.storage.onChanged.addListener(handleStorageChange);
 
     // Restore cache from storage
     if (data[CACHE_STORAGE_KEY]) {
       try {
         const cached = JSON.parse(data[CACHE_STORAGE_KEY]);
-        Object.entries(cached).forEach(([id, value]) => {
-          tweetCache.set(id, value);
-        });
-        console.log(`[Twitter Analyzer] Restored ${tweetCache.size} cached tweets`);
+        if (cached.__sig === engine.signature) {
+          Object.entries(cached).forEach(([id, value]) => {
+            if (id !== '__sig') tweetCache.set(id, value);
+          });
+          console.log(`[Twitter Analyzer] Restored ${tweetCache.size} cached tweets`);
+        } else {
+          console.log('[Twitter Analyzer] Decision engine changed since the cache was written: starting fresh');
+        }
       } catch (e) {
         console.error('[Twitter Analyzer] Failed to restore cache:', e);
       }
@@ -68,6 +89,64 @@
     }
 
     console.log('[Twitter Analyzer] Content script initialized');
+  }
+
+  // Which engine decides? The background worker owns the keys; we only learn what is on.
+  async function loadEngineSettings() {
+    try {
+      const settings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+      engine = {
+        jev: Boolean(settings?.jevConfigured),
+        decideAll: settings?.jevDecideAll !== false
+      };
+      // Anything that changes what a decision would be. Cached results from another setup are stale.
+      engine.signature = [
+        engine.jev ? 'jev' : 'llm',
+        engine.decideAll,
+        settings?.jevModel || '',
+        settings?.jevThreshold ?? '',
+        settings?.model || ''
+      ].join('|');
+    } catch {
+      engine = { jev: false, decideAll: true, signature: 'unknown' };
+    }
+  }
+
+  // Forget every decision and re-judge what is on screen (engine or threshold changed)
+  function resetDecisions() {
+    failedAt.clear();
+    consecutiveFailures = 0;
+    pausedUntil = 0;
+    tweetCache.clear();
+    pendingTweets.clear();
+    tweetQueue = [];
+    document.querySelectorAll('[data-ta-processed]').forEach(el => {
+      cleanVisuals(el);
+      delete el.dataset.taProcessed;
+      delete el.dataset.taTweetId;
+    });
+    if (isActive) processVisibleTweets();
+  }
+
+  async function handleStorageChange(changes, area) {
+    if (area !== 'local') return;
+
+    // Jev switched on/off, re-keyed, or threshold moved: old decisions no longer apply
+    if (changes.jevEnabled || changes.jevApiKey || changes.jevThreshold || changes.jevModel || changes.jevDecideAll) {
+      await loadEngineSettings();
+      resetDecisions();
+      return;
+    }
+
+    // The LLM wrote or refined a Jev decision criterion in the background: pick it up.
+    // Same topics, sharper criteria, so keep the cache and let new tweets use the new wording.
+    if (changes.criteria?.newValue) {
+      const byId = new Map(changes.criteria.newValue.map(c => [c.id, c]));
+      criteria = criteria.map(c => {
+        const fresh = byId.get(c.id);
+        return fresh && fresh.jevInstruction !== c.jevInstruction ? { ...c, jevInstruction: fresh.jevInstruction } : c;
+      });
+    }
   }
 
   // Set up MutationObserver for dynamic content
@@ -232,6 +311,10 @@
       // Check if already pending
       if (pendingTweets.has(tweetId)) return;
 
+      // Decision failed recently: wait before trying again
+      const failed = failedAt.get(tweetId);
+      if (failed && Date.now() - failed < RETRY_AFTER_MS) return;
+
       // Check if already in queue
       if (tweetQueue.some(t => t.id === tweetId)) return;
 
@@ -240,7 +323,8 @@
         tweetQueue.push({
           id: tweetId,
           element: tweet,
-          text: tweetText
+          text: tweetText,
+          author: getTweetAuthor(tweet)
         });
       }
     });
@@ -266,13 +350,34 @@
     });
   }
 
-  // Process tweet queue
+  // Process tweet queue with a small worker pool.
+  // Jev: 8 tweets in flight, visible ones first. LLM: one at a time with a pause.
   async function processQueue() {
     if (isProcessing || tweetQueue.length === 0 || criteria.length === 0) return;
+    if (Date.now() < pausedUntil) return;
 
     isProcessing = true;
+    prioritizeVisibleTweets();
 
-    while (tweetQueue.length > 0 && isActive) {
+    const concurrency = engine.jev ? JEV_CONCURRENCY : LLM_CONCURRENCY;
+    const workers = Array.from({ length: concurrency }, () => queueWorker());
+    await Promise.all(workers);
+
+    isProcessing = false;
+
+    // Tweets that arrived while the last workers were finishing
+    if (tweetQueue.length > 0 && isActive) {
+      processQueue();
+      return;
+    }
+
+    // Save cache periodically
+    saveCacheToStorage();
+    chrome.storage.local.set({ stats }).catch(() => {});
+  }
+
+  async function queueWorker() {
+    while (tweetQueue.length > 0 && isActive && Date.now() >= pausedUntil) {
       const tweet = tweetQueue.shift();
 
       // Skip if already cached (might have been processed while in queue)
@@ -284,11 +389,19 @@
         continue;
       }
 
-      // Mark as pending
+      // Another worker already has it
+      if (pendingTweets.has(tweet.id)) continue;
       pendingTweets.add(tweet.id);
 
       try {
         const result = await analyzeTweet(tweet);
+
+        if (result.failed) {
+          handleDecisionFailure(tweet.id, result.error);
+          continue;
+        }
+        consecutiveFailures = 0;
+        failedAt.delete(tweet.id);
 
         // Cache the result
         cacheResult(tweet.id, result);
@@ -310,6 +423,10 @@
           } else {
             stats.tagged++;
           }
+          // Per-topic share: this is what shows how hard the algorithm leans on one topic
+          for (const c of result.matchedCriteria) {
+            stats.byTopic[c.id] = (stats.byTopic[c.id] || 0) + 1;
+          }
         }
 
         // Update popup stats
@@ -320,14 +437,9 @@
         pendingTweets.delete(tweet.id);
       }
 
-      // Small delay to avoid overwhelming the API
-      await sleep(50);
+      // The LLM path pauses between calls; Jev does not need to
+      if (!engine.jev) await sleep(50);
     }
-
-    isProcessing = false;
-
-    // Save cache periodically
-    saveCacheToStorage();
   }
 
   // Cache a result with LRU eviction
@@ -347,7 +459,7 @@
   // Save cache to chrome.storage.local
   async function saveCacheToStorage() {
     try {
-      const cacheObj = {};
+      const cacheObj = { __sig: engine.signature };
       tweetCache.forEach((value, key) => {
         cacheObj[key] = value;
       });
@@ -360,27 +472,33 @@
   // Analyze a single tweet
   async function analyzeTweet(tweet) {
     const matchedCriteria = [];
+    const scores = {};
+    let usedEngine = 'regex';
 
-    // First, try regex matching (fast path)
-    for (const c of criteria) {
-      if (!c.regexPatterns || c.regexPatterns.length === 0) continue;
+    // Regex fast path. Skipped when Jev decides everything: Jev is cheap, fast, and does not
+    // fall for keyword traps ("Apple pie", "Transformers the movie") the way patterns do.
+    const useRegex = !(engine.jev && engine.decideAll);
+    if (useRegex) {
+      for (const c of criteria) {
+        if (!c.regexPatterns || c.regexPatterns.length === 0) continue;
 
-      for (const patternEntry of c.regexPatterns) {
-        try {
-          // Handle both old format (string) and new format (object with pattern property)
-          const patternStr = typeof patternEntry === 'string' ? patternEntry : patternEntry.pattern;
-          const regex = new RegExp(patternStr, 'i');
-          if (regex.test(tweet.text)) {
-            matchedCriteria.push(c);
-            break;
+        for (const patternEntry of c.regexPatterns) {
+          try {
+            // Handle both old format (string) and new format (object with pattern property)
+            const patternStr = typeof patternEntry === 'string' ? patternEntry : patternEntry.pattern;
+            const regex = new RegExp(patternStr, 'i');
+            if (regex.test(tweet.text)) {
+              matchedCriteria.push(c);
+              break;
+            }
+          } catch {
+            // Invalid regex, skip
           }
-        } catch {
-          // Invalid regex, skip
         }
       }
     }
 
-    // If no regex matches and we have unmatched criteria, use LLM
+    // Everything regex did not settle goes to the decision engine (Jev, or the LLM as fallback)
     const unmatchedCriteria = criteria.filter(
       c => !matchedCriteria.some(m => m.id === c.id)
     );
@@ -390,7 +508,9 @@
         const response = await chrome.runtime.sendMessage({
           type: 'ANALYZE_TWEET',
           tweetText: tweet.text,
-          criteria: unmatchedCriteria
+          author: tweet.author || '',
+          // Only what the decision needs; regex lists can be long
+          criteria: unmatchedCriteria.map(c => ({ id: c.id, description: c.description, jevInstruction: c.jevInstruction }))
         });
 
         if (response?.matches) {
@@ -401,12 +521,42 @@
             }
           }
         }
+        if (response?.scores) Object.assign(scores, response.scores);
+        if (response?.engine) usedEngine = response.engine;
+
+        // The engine answered with an error and decided nothing: this is not a "no match"
+        if (response?.error && !response.matches?.length && matchedCriteria.length === 0) {
+          return { matchedCriteria, scores, engine: usedEngine, failed: true, error: response.error };
+        }
       } catch (err) {
-        console.error('[Twitter Analyzer] LLM analysis failed:', err);
+        console.error('[Twitter Analyzer] Decision engine failed:', err);
+        if (matchedCriteria.length === 0) {
+          return { matchedCriteria, scores, engine: usedEngine, failed: true, error: err.message };
+        }
       }
     }
 
-    return { matchedCriteria };
+    return { matchedCriteria, scores, engine: usedEngine };
+  }
+
+  // A decision could not be made. Do not cache it, retry later, and tell the user why.
+  function handleDecisionFailure(tweetId, error) {
+    failedAt.set(tweetId, Date.now());
+    consecutiveFailures++;
+
+    if (consecutiveFailures >= 3) {
+      // Stop hammering a dead endpoint; everything queued is retried after the pause
+      pausedUntil = Date.now() + RETRY_AFTER_MS;
+      tweetQueue = [];
+      setTimeout(() => { if (isActive) processVisibleTweets(); }, RETRY_AFTER_MS + 100);
+
+      if (Date.now() - lastErrorShownAt > 60000) {
+        lastErrorShownAt = Date.now();
+        const who = engine.jev ? 'Jev' : 'Your LLM provider';
+        const hint = /402/.test(error || '') ? ' (HTTP 402 means the account is out of credits)' : '';
+        showNotification(`Timeline Analyzer: ${who} is not answering: ${error || 'unknown error'}${hint}. Retrying in 30s. Check the extension settings.`, 'error');
+      }
+    }
   }
 
   // Apply visual changes to tweet (non-destructive)
@@ -477,7 +627,10 @@
             const emoji = criteriaItem.emoji || '🏷️';
             const text = truncateText(criteriaItem.description, 15);
             pill.textContent = `${emoji} ${text}`;
-            pill.title = criteriaItem.description;
+            const p = result.scores?.[criteriaItem.id];
+            pill.title = Number.isFinite(p)
+              ? `${criteriaItem.description} · ${Math.round(p * 100)}% (Jev)`
+              : criteriaItem.description;
 
             // Find best insertion point
             const container = userNameEl.closest('div');
@@ -528,6 +681,13 @@
   }
 
   // Get tweet text content (including quoted tweets, reply context, articles, etc.)
+  // "@handle" of the tweet's author, used as context for the decision
+  function getTweetAuthor(element) {
+    const nameEl = element.querySelector(SELECTORS.userName);
+    const match = nameEl?.textContent?.match(/@[A-Za-z0-9_]{1,15}/);
+    return match ? match[0] : '';
+  }
+
   function getTweetText(element) {
     const texts = [];
 
@@ -631,6 +791,11 @@
         processVisibleTweets();
       }
 
+      sendResponse({ ok: true });
+    }
+
+    if (message.type === 'RESET_STATS') {
+      stats = { analyzed: 0, tagged: 0, hidden: 0, byTopic: {} };
       sendResponse({ ok: true });
     }
 

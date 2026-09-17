@@ -729,3 +729,65 @@ section {
   border-color: #1d9bf0;
   color: #fff;
 }
+
+
+/* Per-topic share of seen tweets: how much of the feed a topic has taken over */
+.criteria-share {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+}
+.share-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.share-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--topic-color, #1d9bf0);
+  transition: width 0.3s ease;
+}
+.share-text {
+  font-size: 11px;
+  color: #8b98a5;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.takeover {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 2px 0 10px;
+  min-height: 16px;
+}
+.reset-stats-btn {
+  float: right;
+  background: none;
+  border: none;
+  color: #8b98a5;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.reset-stats-btn:hover { color: #e7e9ea; text-decoration: underline; }
+
+/* Jev decision rule editor */
+.criteria-jev-field { margin-top: 10px; width: 100%; }
+.criteria-jev-field .jev-hint { font-weight: 400; color: #6e767d; text-transform: none; letter-spacing: 0; }
+.criteria-jev-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #38444d;
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px;
+}
+.criteria-jev-input:focus { outline: none; border-color: #1d9bf0; }
