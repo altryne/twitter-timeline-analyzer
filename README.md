@@ -89,6 +89,40 @@ POST /chat/completions
 }
 ```
 
+## Quick start with Jev (5 minutes)
+
+1. `chrome://extensions` → Developer mode → **Load unpacked** → pick this folder. After pulling new code, click **Reload** on the extension card. Open X tabs pick up the new version by themselves.
+2. Click the toolbar icon. In Chrome it opens as a **side panel** that stays docked while you scroll; in browsers without side panels (Arc) it opens as the usual popup.
+3. Gear icon → **Decision Engine: Jev** → tick *Let Jev decide which tweets match* → paste your TypeSafe key → **Test** → **Save Settings**.
+4. (Recommended) In **LLM Configuration** pick a provider, paste its key, click **Refresh**, pick a model, click **Test**. Refresh only lists models and succeeds even with no credits; Test makes a real completion and tells you about problems like `HTTP 402` (out of credits). The LLM is only used to write a rule when you add a topic.
+5. Back in the panel: switch **Analysis** on, type a topic in plain words (for example `Jev from typesafe` or `Personal AI assistants like Muse, Instinct and OpenClaw`), click **Add Topic**. New topics start with Tag and Highlight on.
+6. Scroll your For You feed.
+
+What you will see:
+
+- Matching tweets get a colored tag with Jev's probability (`Jev 95%`) and a highlight. A tweet that matched shows only its tags.
+- Tweets that matched nothing show a faint chip per topic (`🤖 3%`), so you can see the engine looked at them. Hover for the full readout. Switch the chips off in settings if you prefer a clean timeline.
+- Each topic in the panel shows **N tweets · X% of seen** with a bar, and the stats card says which topic is taking over your feed (`AI is 42% of the 144 tweets you have seen`). **Reset** starts the count over.
+
+### Live performance and the on-air comparison
+
+The **Live performance** card at the top of the panel streams while you scroll: tweets per second, median ms per call, cost per 1,000 tweets, and a sparkline of recent call latencies. Numbers animate as calls land.
+
+The **Jev | your-LLM** switch in that card changes the decision engine with one click. Everything on screen is re-judged by the other engine, and the two comparison rows fill in side by side on the same tweets, ending in a verdict line such as *Jev is 11x faster per tweet and 14x cheaper*. Flip back and forth as often as you like; each engine keeps its own numbers until you press Reset. LLM cost is estimated from list prices for common models.
+
+### Teaching it a tweet it missed
+
+Open a tweet's **···** menu or its **Share** menu and choose **Categorize for Timeline Analyzer**. Tick the topic(s), optionally say why in a sentence, and submit. Your LLM reads the tweet, your comment and the current rule, then rewrites the topic's Jev decision rule (and adds regex patterns). The tweet keeps your tag no matter what the engine says later, and everything on screen is re-judged with the sharper rule.
+
+You can also edit a rule by hand: expand the topic in the panel, change **Jev decision rule**, click Save.
+
+### If nothing is being tagged
+
+- Is the **Analysis** switch on? Removing and re-adding the extension resets it to off.
+- Did you press **Reload** on the extension after pulling new code?
+- A red banner on the page (`Jev is not answering: ...`) names the failing engine and the error. `HTTP 402` means that account is out of credits.
+- Brand-new names (a model called Jev, an app called Muse) are handled: every rule ends with "if the tweet names it directly, the answer is yes", because the model has never heard of them. If a topic still under-scores, make the topic text more specific or lower **Match threshold** in settings.
+
 ### Enabling Jev as the Decision Engine (Optional, Recommended)
 
 Classifying every tweet with an LLM is slow and adds up. [Jev](https://docs.typesafe.ai/introduction) is a different kind of model: it cannot generate text, it only answers typed questions with calibrated probabilities. That is exactly the shape of this job.
@@ -129,6 +163,9 @@ node --env-file=path/to/.env scripts/test-jev.mjs
 
 # Bulk batch sizes vs accuracy, and the bulk + second opinion hybrid
 node --env-file=path/to/.env scripts/test-jev-bulk.mjs
+
+# Live performance card + engine switch against a fake 650 ms LLM
+node --env-file=path/to/.env scripts/e2e-perf.mjs
 
 # Full end-to-end run in Chrome for Testing against a mock timeline (see the header of the script)
 node --env-file=path/to/.env scripts/e2e-jev.mjs

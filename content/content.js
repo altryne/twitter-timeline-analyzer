@@ -637,8 +637,19 @@
     }
   }
 
+  // Topics the user assigned by hand. They win over the engine and survive every re-judge.
+  const manualMatches = new Map(); // tweetId -> Set of topic ids
+  function withManual(tweetId, result) {
+    const manual = manualMatches.get(tweetId);
+    if (!manual) return result;
+    const have = new Set(result.matchedCriteria.map(c => c.id));
+    const extra = criteria.filter(c => manual.has(c.id) && !have.has(c.id));
+    return { ...result, matchedCriteria: [...result.matchedCriteria, ...extra], manual: true };
+  }
+
   // Record a decision: cache it, draw it, count it
   function settleTweet(tweet, result) {
+    result = withManual(tweet.id, result);
     cacheResult(tweet.id, result);
 
     let element = document.querySelector(`[data-ta-tweet-id="${tweet.id}"]`);
@@ -690,9 +701,9 @@
       pendingTweets.add(tweet.id);
 
       try {
-        const result = await analyzeTweet(tweet);
+        const result = withManual(tweet.id, await analyzeTweet(tweet));
 
-        if (result.failed) {
+        if (result.failed && !result.manual) {
           handleDecisionFailure(tweet.id, result.error);
           continue;
         }
@@ -1176,7 +1187,8 @@
   function setupMenuObserver() {
     // Track clicks on the "more" button to know which tweet's menu is opening
     document.addEventListener('click', (e) => {
-      const moreBtn = e.target.closest('[data-testid="caret"]');
+      // The tweet's "..." menu and its Share menu both get our item
+      const moreBtn = e.target.closest('[data-testid="caret"], button[aria-label="Share post"], [aria-label="Share post"]');
       if (moreBtn) {
         const tweet = moreBtn.closest(SELECTORS.tweet);
         if (tweet) {
@@ -1457,22 +1469,35 @@
               criteria[idx].regexPatterns = updated.regexPatterns;
             }
           }
-          // Save updated criteria
+        }
+        // The LLM also rewrote the Jev decision rule from this tweet and your comment. Take it
+        // before saving, or our older copy of the topics would overwrite it in storage.
+        const rewritten = response.instructionUpdates || [];
+        for (const u of rewritten) {
+          const idx = criteria.findIndex(c => c.id === u.id);
+          if (idx !== -1) criteria[idx].jevInstruction = u.jevInstruction;
+        }
+        if (response.updatedCriteria?.length || rewritten.length) {
           await chrome.storage.local.set({ criteria });
         }
 
-        // Mark this tweet as matching the selected topics
-        const matchedCriteria = criteria.filter(c => selectedTopics.includes(c.id));
-        const result = { matchedCriteria };
-        cacheResult(tweetId, result);
-        applyVisualChanges(lastMenuTweet, result, tweetId);
+        // This tweet belongs to the chosen topics no matter what the engine says later
+        const picked = manualMatches.get(tweetId) || new Set();
+        selectedTopics.forEach(id => picked.add(id));
+        manualMatches.set(tweetId, picked);
 
-        // Update stats
-        stats.tagged++;
+        const result = withManual(tweetId, tweetCache.get(tweetId)?.result || { matchedCriteria: [], scores: {} });
+        cacheResult(tweetId, result);
+        cleanVisuals(lastMenuTweet);
+        applyVisualChanges(lastMenuTweet, result, tweetId);
+        countDecision(tweetId, result);
         chrome.runtime.sendMessage({ type: 'STATS_UPDATE', stats }).catch(() => {});
 
-        // Show success notification
-        showNotification('Learned! Future similar tweets will be categorized automatically.', 'success');
+        // A sharper rule means everything else on screen deserves a second look
+        if (rewritten.length && engine.jev) resetDecisions();
+
+        const what = rewritten.length ? 'Rewrote the Jev rule' : (response.updatedCriteria?.length ? 'Added new patterns' : 'Tagged this tweet');
+        showNotification(`${what}. Similar tweets will be picked up from now on.`, 'success');
       } else {
         showNotification(response?.error || 'Failed to learn from feedback', 'error');
       }
