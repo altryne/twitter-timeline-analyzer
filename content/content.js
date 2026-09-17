@@ -156,14 +156,21 @@
       return;
     }
 
-    // The LLM wrote or refined a Jev decision criterion in the background: pick it up.
-    // Same topics, sharper criteria, so keep the cache and let new tweets use the new wording.
+    // A Jev decision rule was written or edited (by the LLM in the background, from feedback, or
+    // by hand in the popup). Every score on screen was judged against the old wording, and Jev is
+    // cheap, so throw those decisions away and re-judge with the new rule.
     if (changes.criteria?.newValue) {
       const byId = new Map(changes.criteria.newValue.map(c => [c.id, c]));
+      let ruleChanged = false;
       criteria = criteria.map(c => {
         const fresh = byId.get(c.id);
-        return fresh && fresh.jevInstruction !== c.jevInstruction ? { ...c, jevInstruction: fresh.jevInstruction } : c;
+        if (fresh && fresh.jevInstruction !== c.jevInstruction) {
+          ruleChanged = true;
+          return { ...c, jevInstruction: fresh.jevInstruction };
+        }
+        return c;
       });
+      if (ruleChanged && engine.jev) resetDecisions();
     }
   }
 
@@ -508,14 +515,29 @@
     }
     if (element) applyVisualChanges(element, result, tweet.id);
 
-    stats.analyzed++;
-    if (result.matchedCriteria.length > 0) {
-      if (result.matchedCriteria.some(c => c.actions.hide)) stats.hidden++;
-      else stats.tagged++;
-      for (const c of result.matchedCriteria) {
-        stats.byTopic[c.id] = (stats.byTopic[c.id] || 0) + 1;
-      }
+    countDecision(tweet.id, result);
+  }
+
+  // Each tweet counts once toward "seen" and toward its topics, even when it is re-judged
+  // (rule edited, threshold moved). Re-judging replaces the tweet's earlier contribution.
+  const counted = new Map(); // tweetId -> { topics: [ids], hidden, tagged }
+  function countDecision(tweetId, result) {
+    const prev = counted.get(tweetId);
+    if (prev) {
+      stats.analyzed = Math.max(0, stats.analyzed - 1);
+      if (prev.hidden) stats.hidden = Math.max(0, stats.hidden - 1);
+      if (prev.tagged) stats.tagged = Math.max(0, stats.tagged - 1);
+      for (const id of prev.topics) stats.byTopic[id] = Math.max(0, (stats.byTopic[id] || 0) - 1);
     }
+    const entry = { topics: result.matchedCriteria.map(c => c.id), hidden: false, tagged: false };
+    stats.analyzed++;
+    if (entry.topics.length > 0) {
+      if (result.matchedCriteria.some(c => c.actions.hide)) { stats.hidden++; entry.hidden = true; }
+      else { stats.tagged++; entry.tagged = true; }
+      for (const id of entry.topics) stats.byTopic[id] = (stats.byTopic[id] || 0) + 1;
+    }
+    counted.set(tweetId, entry);
+    if (counted.size > 5000) counted.delete(counted.keys().next().value);
   }
 
   async function queueWorker() {
@@ -558,18 +580,8 @@
           applyVisualChanges(element, result, tweet.id);
         }
 
-        stats.analyzed++;
-        if (result.matchedCriteria.length > 0) {
-          if (result.matchedCriteria.some(c => c.actions.hide)) {
-            stats.hidden++;
-          } else {
-            stats.tagged++;
-          }
-          // Per-topic share: this is what shows how hard the algorithm leans on one topic
-          for (const c of result.matchedCriteria) {
-            stats.byTopic[c.id] = (stats.byTopic[c.id] || 0) + 1;
-          }
-        }
+        // Per-topic share: this is what shows how hard the algorithm leans on one topic
+        countDecision(tweet.id, result);
 
         // Update popup stats
         chrome.runtime.sendMessage({ type: 'STATS_UPDATE', stats }).catch(() => {});
@@ -974,6 +986,7 @@
 
     if (message.type === 'RESET_STATS') {
       stats = { analyzed: 0, tagged: 0, hidden: 0, byTopic: {} };
+      counted.clear();
       sendResponse({ ok: true });
     }
 

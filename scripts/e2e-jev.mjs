@@ -133,6 +133,16 @@ try {
   const chips = await page.evaluate(() => Array.from(document.querySelectorAll('article')).slice(-3).map(a => (a.querySelector('.ta-scores')?.textContent || 'NO SCORES') + ' | ' + a.querySelector('[data-testid="tweetText"]').textContent.slice(0, 40)));
   chips.forEach(c => console.log('   ', c));
 
+  const before = await sw.evaluate(async () => (await chrome.storage.local.get(['stats'])).stats);
+  await sw.evaluate(async () => {
+    const { criteria } = await chrome.storage.local.get(['criteria']);
+    criteria[2].jevInstruction = 'The tweet is about cryptocurrency: Bitcoin, Ethereum, tokens, airdrops, wallets, or crypto markets.';
+    await chrome.storage.local.set({ criteria });
+  });
+  await new Promise(r => setTimeout(r, 2500));
+  const after = await sw.evaluate(async () => (await chrome.storage.local.get(['stats'])).stats);
+  console.log('RULE EDIT re-judge: analyzed', before.analyzed, '->', after.analyzed, '| crypto', before.byTopic.cry1, '->', after.byTopic.cry1, '(analyzed must not grow)');
+
   await new Promise(r => setTimeout(r, 600));
   const stats = await sw.evaluate(async () => (await chrome.storage.local.get(['stats'])).stats);
   console.log('stats in storage:', JSON.stringify(stats));
@@ -162,6 +172,9 @@ try {
   const opts = await browser.newPage();
   await opts.setViewport({ width: 900, height: 1200 });
   await opts.goto(`chrome-extension://${extId}/options/options.html`, { waitUntil: 'load' });
+  await opts.click('#testLlmBtn');
+  await new Promise(r => setTimeout(r, 300));
+  console.log('llm test (no key in this harness):', await opts.$eval('#llmTestResult', e => e.textContent));
   await opts.click('#testJevBtn');
   await opts.waitForFunction(() => /Connected|failed/.test(document.getElementById('jevTestResult').textContent), { timeout: 15000 });
   console.log('options test:', await opts.$eval('#jevTestResult', e => e.textContent));

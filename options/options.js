@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     input.type = input.type === 'password' ? 'text' : 'password';
   });
   document.getElementById('testJevBtn').addEventListener('click', testJev);
+  document.getElementById('testLlmBtn').addEventListener('click', testLlm);
 
   if (settings.apiKey) {
     document.getElementById('apiKey').value = settings.apiKey;
@@ -309,6 +310,76 @@ async function refreshModels() {
 
   btn.disabled = false;
   btn.textContent = originalText;
+}
+
+// One real completion with the key, URL and model currently in the form (saved or not).
+// It asks for exactly what the extension needs from the LLM: a one-sentence decision rule as JSON.
+async function testLlm() {
+  const out = document.getElementById('llmTestResult');
+  const btn = document.getElementById('testLlmBtn');
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const apiBaseUrl = document.getElementById('apiBaseUrl').value.trim().replace(/\/+$/, '');
+  const model = document.getElementById('model').value;
+
+  const fail = (msg) => { out.className = 'jev-test-result error'; out.textContent = msg; return false; };
+  if (!apiKey) return fail('Enter an API key first');
+  if (!apiBaseUrl) return fail('Enter an API base URL first');
+  if (!model || model === '__custom__') return fail('Pick a model first (click Refresh to load them)');
+
+  btn.disabled = true;
+  out.className = 'jev-test-result';
+  out.textContent = `Asking ${model}...`;
+  const started = Date.now();
+  try {
+    const response = await fetch(`${apiBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: 'You write decision criteria for a fast yes/no tweet classifier. Return ONLY a JSON object: {"jevInstruction": "The tweet is about ..."} with ONE declarative sentence under 40 words.' },
+          { role: 'user', content: 'Topic: "AI and machine learning news"' }
+        ],
+        max_tokens: 200,
+        temperature: 0.3
+      })
+    });
+    const ms = Date.now() - started;
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      const detail = error.error?.message || error.message || '';
+      const hints = {
+        401: 'the key was rejected',
+        402: 'payment required: the account is out of credits',
+        403: 'this key is not allowed to use this model',
+        404: 'model or URL not found: check the base URL and pick a model from Refresh',
+        429: 'rate limited: wait a moment or pick another model'
+      };
+      return fail(`HTTP ${response.status}${hints[response.status] ? ` (${hints[response.status]})` : ''}${detail ? `: ${detail}` : ''}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    let rule = null;
+    try {
+      rule = JSON.parse(content.trim().replace(/```json\n?|\n?```/g, '')).jevInstruction;
+    } catch {
+      // Connected, but the model did not return clean JSON
+    }
+    if (rule) {
+      out.className = 'jev-test-result ok';
+      out.textContent = `Working: ${model} answered in ${ms} ms. Sample rule: "${rule}"`;
+      return true;
+    }
+    out.className = 'jev-test-result error';
+    out.textContent = `Connected in ${ms} ms, but ${model} did not return the JSON the extension needs. It said: "${content.slice(0, 120)}". Try a larger or instruct-tuned model.`;
+    return false;
+  } catch (err) {
+    return fail(`Could not reach ${apiBaseUrl}: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function syncJevUi() {

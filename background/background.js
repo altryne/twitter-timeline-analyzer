@@ -19,7 +19,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     initWeave();
   }
   // When Jev gets switched on, have the LLM write decision criteria for topics that lack them
-  if (area === 'local' && (changes.jevEnabled?.newValue || changes.jevApiKey?.newValue)) {
+  // Same when the LLM starts working again (new key, model or provider): topics added while it
+  // was down never got their rule written
+  if (area === 'local' && (changes.jevEnabled?.newValue || changes.jevApiKey?.newValue ||
+      changes.apiKey?.newValue || changes.model?.newValue || changes.apiBaseUrl?.newValue)) {
     backfillJevInstructions();
   }
 });
