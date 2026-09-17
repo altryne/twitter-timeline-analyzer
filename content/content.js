@@ -313,8 +313,9 @@
     if (getTweetId(element) !== tweetId) return false;
 
     // The per-topic probability row should be there whenever we have scores to show
-    const hasScores = cached.result.scores && Object.keys(cached.result.scores).length > 0;
-    if (engine.showScores && hasScores && !element.querySelector('.ta-scores')) return false;
+    const taggedIds = new Set(cached.result.matchedCriteria.filter(c => c.actions?.tag && !c.actions?.hide).map(c => c.id));
+    const hasChips = cached.result.scores && Object.keys(cached.result.scores).some(id => !taggedIds.has(id));
+    if (engine.showScores && hasChips && !element.querySelector('.ta-scores')) return false;
 
     if (!cached.result.matchedCriteria.length) return true;
 
@@ -805,7 +806,9 @@
   function renderScores(element, result) {
     const existing = element.querySelector('.ta-scores');
     if (!engine.showScores || !result?.scores) { existing?.remove(); return; }
-    const entries = criteria.filter(c => Number.isFinite(result.scores[c.id]));
+    // A matched topic with Tag on already shows its percent in the tag itself: no second chip
+    const tagged = new Set((result.matchedCriteria || []).filter(c => c.actions?.tag && !c.actions?.hide).map(c => c.id));
+    const entries = criteria.filter(c => Number.isFinite(result.scores[c.id]) && !tagged.has(c.id));
     if (entries.length === 0) { existing?.remove(); return; }
 
     // Redraw only when something changed, so we do not feed our own MutationObserver
@@ -820,7 +823,7 @@
     const row = document.createElement('span');
     row.className = 'ta-scores';
     row.dataset.sig = sig;
-    row.title = entries.map(c => `${c.description}: ${Math.round(result.scores[c.id] * 100)}%`).join('\n')
+    row.title = criteria.filter(c => Number.isFinite(result.scores[c.id])).map(c => `${c.description}: ${Math.round(result.scores[c.id] * 100)}%`).join('\n')
       + (result.refined ? '\n(second opinion asked for this tweet)' : '');
     for (const c of entries) {
       const p = result.scores[c.id];
