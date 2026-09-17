@@ -109,6 +109,7 @@
       };
       // Anything that changes what a decision would be. Cached results from another setup are stale.
       engine.signature = [
+        'rules-v2', // bump when the way rules are phrased changes, so old scores are not reused
         engine.jev ? 'jev' : 'llm',
         engine.decideAll,
         settings?.jevModel || '',

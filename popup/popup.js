@@ -235,7 +235,7 @@ async function addCriteria() {
     regexPatterns: [],
     actions: {
       tag: true,
-      highlight: false,
+      highlight: true, // a new topic should be visible on the timeline right away
       hide: false
     },
     generating: true
