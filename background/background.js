@@ -2,7 +2,7 @@
 import * as weave from '../lib/weaveShim.js';
 import { decideTweet, decideTweetsHybrid, JEV_DEFAULT_MODEL, JEV_DEFAULT_THRESHOLD } from '../lib/jev.js';
 
-const JEV_SETTING_KEYS = ['jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll', 'jevShowScores'];
+const JEV_SETTING_KEYS = ['jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll', 'jevShowScores', 'showHud', 'llmPriceIn', 'llmPriceOut', 'preset'];
 
 // Initialize Weave when settings are available
 async function initWeave() {
@@ -28,8 +28,37 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 backfillJevInstructions();
 
+// Open as a native side panel where the browser has one; fall back to the popup elsewhere.
+// Arc exposes chrome.sidePanel but never shows it, so a content script tells us when it sees Arc.
+async function applyPanelMode() {
+  const { isArc, useSidePanel } = await chrome.storage.local.get(['isArc', 'useSidePanel']);
+  const canPanel = Boolean(chrome.sidePanel?.setPanelBehavior) && !isArc && useSidePanel !== false;
+  try {
+    if (canPanel) {
+      await chrome.action.setPopup({ popup: '' });
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    } else {
+      if (chrome.sidePanel?.setPanelBehavior) await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+      await chrome.action.setPopup({ popup: 'popup/popup.html' });
+    }
+  } catch (err) {
+    console.error('Panel mode failed, using the popup:', err);
+    chrome.action.setPopup({ popup: 'popup/popup.html' }).catch(() => {});
+  }
+}
+applyPanelMode();
+chrome.runtime.onStartup.addListener(applyPanelMode);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (changes.isArc || changes.useSidePanel)) applyPanelMode();
+});
+
 // Message handling
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'ARC_DETECTED') {
+    chrome.storage.local.set({ isArc: true });
+    return false;
+  }
+
   if (message.type === 'GENERATE_PATTERNS') {
     generatePatternsAndEmoji(message.description)
       .then(result => sendResponse(result))
@@ -65,7 +94,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(settings => {
         // Never hand API keys to the content script; it only needs to know what is on
         const { apiKey, jevApiKey, ...rest } = settings;
-        sendResponse({ ...rest, llmConfigured: Boolean(apiKey), jevConfigured: Boolean(settings.jevEnabled && jevApiKey) });
+        sendResponse({ ...rest, llmConfigured: Boolean(apiKey && settings.apiBaseUrl && settings.model), jevKeySet: Boolean(jevApiKey), jevConfigured: Boolean(settings.jevEnabled && jevApiKey) });
       });
     return true;
   }
@@ -178,7 +207,7 @@ async function analyzeTweetWithJev(tweetText, criteria, author, settings) {
       author,
       criteria
     });
-    const output = { matches: result.matches, scores: result.scores, engine: 'jev', latencyMs: result.latencyMs };
+    const output = { matches: result.matches, scores: result.scores, engine: 'jev', latencyMs: result.latencyMs, usage: result.usage || null, model: result.model, calls: 1 };
     await weave.endTrace(traceContext, output, { model: result.model, usage: result.usage });
     return output;
   } catch (err) {
@@ -207,7 +236,15 @@ async function analyzeTweetsBulk(tweets, criteria) {
       tweets,
       criteria
     });
-    const result = { results: out.results, engine: 'jev', bulkLatencyMs: out.bulkLatencyMs, refinedCount: out.refinedCount };
+    const result = {
+      results: out.results,
+      engine: 'jev',
+      model: out.model,
+      bulkLatencyMs: out.bulkLatencyMs,
+      refinedCount: out.refinedCount,
+      calls: 1 + (out.refinedCount || 0),
+      usage: out.usage || null
+    };
     await weave.endTrace(traceContext, { tweetCount: tweets.length, refinedCount: out.refinedCount, bulkLatencyMs: out.bulkLatencyMs }, { model: out.model, usage: out.usage });
     return result;
   } catch (err) {
@@ -257,8 +294,9 @@ Rules:
 
 Example output: ["abc123", "def456"]`;
 
+  const llmMeta = {};
   try {
-    const response = await callLLM(settings, systemPrompt, `Classify this tweet:\n"${tweetText}"`, traceContext);
+    const response = await callLLM(settings, systemPrompt, `Classify this tweet:\n"${tweetText}"`, traceContext, llmMeta);
 
     const cleaned = response.trim().replace(/```json\n?|\n?```/g, '');
     const matches = JSON.parse(cleaned);
@@ -267,7 +305,7 @@ Example output: ["abc123", "def456"]`;
       // Validate that returned IDs exist in criteria
       const validIds = new Set(criteria.map(c => c.id));
       const validMatches = matches.filter(id => validIds.has(id));
-      const output = { matches: validMatches, engine: 'llm' };
+      const output = { matches: validMatches, engine: 'llm', model: settings.model, latencyMs: llmMeta.latencyMs, usage: llmMeta.usage || null, calls: 1 };
       await weave.endTrace(traceContext, output);
       return output;
     }
@@ -336,7 +374,7 @@ async function backfillJevInstructions() {
 }
 
 // Generic LLM API call with Weave tracing
-async function callLLM(settings, systemPrompt, userMessage, parentContext = null) {
+async function callLLM(settings, systemPrompt, userMessage, parentContext = null, meta = null) {
   const messages = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userMessage }
@@ -370,7 +408,12 @@ async function callLLM(settings, systemPrompt, userMessage, parentContext = null
   };
 
   // Trace with Weave if enabled
+  const started = Date.now();
   const result = await weave.traceLLMCall(settings.model, messages, makeCall, parentContext);
+  if (meta) {
+    meta.latencyMs = Date.now() - started;
+    meta.usage = result.usage || null;
+  }
   return result.content;
 }
 

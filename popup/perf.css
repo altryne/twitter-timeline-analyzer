@@ -1,0 +1,74 @@
+/* Live performance card + side panel layout */
+:root { --jev: #00e0a4; --llm: #ff7a59; }
+
+body.panel { width: 100%; min-width: 320px; }
+body.panel .container { max-width: 520px; margin: 0 auto; }
+
+.perf-section {
+  background: linear-gradient(160deg, rgba(0, 224, 164, 0.07), rgba(29, 155, 240, 0.05) 60%, rgba(255, 122, 89, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  margin-bottom: 14px;
+  transition: border-color 0.4s ease;
+}
+.perf-section[data-active="jev"] { border-color: rgba(0, 224, 164, 0.35); }
+.perf-section[data-active="llm"] { border-color: rgba(255, 122, 89, 0.4); }
+
+.perf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.perf-head h2 { margin: 0; display: flex; align-items: center; gap: 7px; }
+.perf-dot { width: 8px; height: 8px; border-radius: 50%; background: #536471; display: inline-block; }
+.perf-dot.beat { animation: perfBeat 0.45s ease-out; }
+@keyframes perfBeat {
+  0% { background: #fff; box-shadow: 0 0 0 0 rgba(0, 224, 164, 0.8); transform: scale(1.5); }
+  100% { background: var(--active, #00e0a4); box-shadow: 0 0 0 9px rgba(0, 224, 164, 0); transform: scale(1); }
+}
+
+.engine-switch {
+  position: relative; display: grid; grid-template-columns: 1fr 1fr;
+  background: rgba(255, 255, 255, 0.06); border-radius: 999px; padding: 2px; min-width: 150px;
+}
+.engine-switch button {
+  position: relative; z-index: 1; background: none; border: 0; color: #8b98a5; font: inherit; font-size: 12px; font-weight: 700;
+  padding: 5px 10px; cursor: pointer; border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px;
+  transition: color 0.25s ease;
+}
+.engine-switch button.on { color: #0b1117; }
+.engine-switch button:disabled { opacity: 0.4; cursor: not-allowed; }
+.engine-thumb {
+  position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 999px;
+  background: var(--jev); transition: transform 0.32s cubic-bezier(0.2, 0.9, 0.2, 1.15), background 0.32s ease;
+}
+.engine-switch[data-active="llm"] .engine-thumb { transform: translateX(100%); background: var(--llm); }
+
+.perf-big { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.perf-metric { display: flex; flex-direction: column; min-width: 0; }
+.perf-num {
+  font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; font-variant-numeric: tabular-nums;
+  color: var(--active, #e7e9ea); transition: color 0.4s ease; white-space: nowrap;
+}
+.perf-num.bump { animation: perfBump 0.28s ease-out; }
+@keyframes perfBump { 0% { transform: translateY(2px) scale(0.97); opacity: 0.6; } 100% { transform: none; opacity: 1; } }
+.perf-unit { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #8b98a5; margin-top: 3px; }
+
+.perf-spark { display: flex; align-items: flex-end; gap: 2px; height: 38px; margin-bottom: 10px; overflow: hidden; }
+.perf-spark i {
+  flex: 1 1 0; min-width: 3px; max-width: 9px; border-radius: 2px 2px 0 0; background: var(--jev); opacity: 0.9;
+  transform-origin: bottom; animation: sparkIn 0.3s cubic-bezier(0.2, 0.9, 0.2, 1.2);
+  transition: height 0.3s ease;
+}
+.perf-spark i.llm { background: var(--llm); }
+@keyframes sparkIn { from { transform: scaleY(0); opacity: 0; } to { transform: scaleY(1); opacity: 0.9; } }
+.perf-spark .perf-empty { color: #6e767d; font-size: 12px; align-self: center; font-style: normal; }
+
+.perf-compare { display: grid; gap: 6px; }
+.perf-row { display: grid; grid-template-columns: minmax(70px, 96px) 1fr auto; align-items: center; gap: 8px; font-size: 11.5px; opacity: 0.55; transition: opacity 0.3s ease; }
+.perf-row.has-data { opacity: 1; }
+.perf-row-name { display: flex; align-items: center; gap: 6px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
+.sw-jev { background: var(--jev); } .sw-llm { background: var(--llm); }
+.perf-row-bar { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.perf-row-bar i { display: block; height: 100%; width: 0; border-radius: 4px; transition: width 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
+#barJev { background: var(--jev); } #barLlm { background: var(--llm); }
+.perf-row-val { color: #c4cfd6; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.perf-verdict { font-size: 13px; font-weight: 800; min-height: 17px; margin-top: 4px; color: var(--jev); }

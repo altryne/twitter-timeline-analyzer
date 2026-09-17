@@ -32,7 +32,77 @@
   let pausedUntil = 0;
   let lastErrorShownAt = 0;
   const JEV_CONCURRENCY = 8;  // Jev answers in ~150-300ms, so run tweets in parallel
-  const LLM_CONCURRENCY = 1;  // LLM path stays serial to respect provider rate limits
+  const LLM_CONCURRENCY = 3;  // a fair fight for the live comparison, still gentle on rate limits
+
+  // ---- Live performance, per engine, streamed to the popup / side panel ----
+  // Rough list prices in $ per million tokens [input, output]; override in settings.
+  const LLM_PRICES = [
+    [/llama-?3\.3-?70b/i, 0.85, 1.20], [/llama-?3\.1-?8b/i, 0.10, 0.10], [/gpt-oss-120b/i, 0.35, 0.75],
+    [/qwen-?3-?235b/i, 0.60, 1.20], [/qwen-?3-?32b/i, 0.40, 0.80], [/gpt-4o-mini/i, 0.15, 0.60],
+    [/gpt-4o/i, 2.50, 10.0], [/haiku/i, 0.80, 4.0]
+  ];
+  const JEV_PRICE_IN = 0.042; // $ per million input tokens, output free
+  const newPerf = () => ({ tweets: 0, calls: 0, tokensIn: 0, tokensOut: 0, cost: 0, busyMs: 0, latencies: [], stamps: [], model: '', peakTps: 0 });
+  let perf = { jev: newPerf(), llm: newPerf() };
+  let engineInfo = { llmModel: '', jevModel: '', llmConfigured: false, jevKeySet: false, priceIn: null, priceOut: null };
+  let perfTimer = null;
+
+  function llmPrice(model) {
+    if (Number.isFinite(engineInfo.priceIn) && Number.isFinite(engineInfo.priceOut)) return [engineInfo.priceIn, engineInfo.priceOut];
+    const hit = LLM_PRICES.find(([re]) => re.test(model || ''));
+    return hit ? [hit[1], hit[2]] : [0.60, 0.60];
+  }
+
+  // One finished request: how many tweets it settled, how many API calls it took, how long we waited
+  function recordPerf(which, { tweets, calls = 1, wallMs, usage, model }) {
+    const e = perf[which];
+    const now = Date.now();
+    e.tweets += tweets;
+    e.calls += calls;
+    e.busyMs += wallMs || 0;
+    if (model) e.model = model;
+    const tin = usage?.input_tokens ?? usage?.prompt_tokens ?? 0;
+    const tout = usage?.output_tokens ?? usage?.completion_tokens ?? 0;
+    e.tokensIn += tin;
+    e.tokensOut += tout;
+    if (which === 'jev') e.cost += tin * JEV_PRICE_IN / 1e6;
+    else { const [pi, po] = llmPrice(e.model); e.cost += (tin * pi + tout * po) / 1e6; }
+    if (wallMs) { e.latencies.push(Math.round(wallMs)); if (e.latencies.length > 60) e.latencies.shift(); }
+    for (let i = 0; i < tweets; i++) e.stamps.push(now);
+    while (e.stamps.length && now - e.stamps[0] > 3000) e.stamps.shift();
+    e.peakTps = Math.max(e.peakTps, e.stamps.length / 3);
+    schedulePerfBroadcast();
+  }
+
+  function perfSnapshot() {
+    const now = Date.now();
+    const view = (e) => {
+      const stamps = e.stamps.filter(t => now - t <= 3000);
+      const sorted = [...e.latencies].sort((a, b) => a - b);
+      return {
+        tweets: e.tweets, calls: e.calls, tokensIn: e.tokensIn, tokensOut: e.tokensOut, cost: e.cost, model: e.model,
+        tpsNow: stamps.length / 3, peakTps: e.peakTps,
+        medianMs: sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0,
+        lastMs: e.latencies[e.latencies.length - 1] || 0,
+        msPerTweet: e.tweets ? e.busyMs / e.tweets : 0,
+        costPer1k: e.tweets ? (e.cost / e.tweets) * 1000 : 0,
+        latencies: e.latencies.slice(-40)
+      };
+    };
+    return { active: engine.jev ? 'jev' : 'llm', jev: view(perf.jev), llm: view(perf.llm), info: engineInfo, queued: tweetQueue.length, at: now };
+  }
+
+  function schedulePerfBroadcast() {
+    if (perfTimer) return;
+    perfTimer = setTimeout(() => {
+      perfTimer = null;
+      const snap = perfSnapshot();
+      chrome.runtime.sendMessage({ type: 'PERF_UPDATE', perf: snap }).catch(() => {});
+      chrome.storage.local.set({ perf: snap }).catch(() => {});
+      // keep the "tweets/s right now" number decaying to zero after a burst
+      if (snap.jev.tpsNow > 0 || snap.llm.tpsNow > 0) schedulePerfBroadcast();
+    }, 120);
+  }
 
   // Cache settings
   const CACHE_MAX_SIZE = 500;
@@ -95,6 +165,13 @@
       requestAnimationFrame(() => processVisibleTweets());
     }
 
+    // Arc cannot show side panels: let the background keep the classic popup there
+    try {
+      if (getComputedStyle(document.documentElement).getPropertyValue('--arc-palette-title')) {
+        chrome.runtime.sendMessage({ type: 'ARC_DETECTED' }).catch(() => {});
+      }
+    } catch { /* not fatal */ }
+
     console.log('[Twitter Analyzer] Content script initialized');
   }
 
@@ -108,6 +185,15 @@
         showScores: settings?.jevShowScores !== false
       };
       // Anything that changes what a decision would be. Cached results from another setup are stale.
+      engineInfo = {
+        llmModel: settings?.model || '',
+        jevModel: settings?.jevModel || 'jev-latest',
+        llmConfigured: Boolean(settings?.llmConfigured),
+        jevKeySet: Boolean(settings?.jevKeySet),
+        provider: settings?.preset || '',
+        priceIn: settings?.llmPriceIn === '' || settings?.llmPriceIn == null ? null : Number(settings.llmPriceIn),
+        priceOut: settings?.llmPriceOut === '' || settings?.llmPriceOut == null ? null : Number(settings.llmPriceOut)
+      };
       engine.signature = [
         'rules-v2', // bump when the way rules are phrased changes, so old scores are not reused
         engine.jev ? 'jev' : 'llm',
@@ -139,6 +225,16 @@
 
   async function handleStorageChange(changes, area) {
     if (area !== 'local') return;
+
+    if (changes.llmPriceIn || changes.llmPriceOut || changes.model || changes.apiKey || changes.apiBaseUrl) {
+      await loadEngineSettings();
+      schedulePerfBroadcast();
+      if (!changes.jevEnabled && !changes.jevApiKey && !changes.jevThreshold && !changes.jevModel && !changes.jevDecideAll && !changes.criteria && !changes.jevShowScores) {
+        // a different LLM only matters for decisions when the LLM is the engine
+        if (!engine.jev && (changes.model || changes.apiKey || changes.apiBaseUrl)) resetDecisions();
+        return;
+      }
+    }
 
     // Display-only setting: redraw what we already know
     if (changes.jevShowScores && !changes.jevEnabled && !changes.jevApiKey && !changes.jevThreshold && !changes.jevModel && !changes.jevDecideAll) {
@@ -313,8 +409,8 @@
     if (getTweetId(element) !== tweetId) return false;
 
     // The per-topic probability row should be there whenever we have scores to show
-    const taggedIds = new Set(cached.result.matchedCriteria.filter(c => c.actions?.tag && !c.actions?.hide).map(c => c.id));
-    const hasChips = cached.result.scores && Object.keys(cached.result.scores).some(id => !taggedIds.has(id));
+    const showsTag = cached.result.matchedCriteria.some(c => c.actions?.tag && !c.actions?.hide);
+    const hasChips = !showsTag && cached.result.scores && Object.keys(cached.result.scores).length > 0;
     if (engine.showScores && hasChips && !element.querySelector('.ta-scores')) return false;
 
     if (!cached.result.matchedCriteria.length) return true;
@@ -464,6 +560,7 @@
 
   async function sendBatch(batch) {
     inflightBatches++;
+    const sentAt = Date.now();
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'ANALYZE_TWEETS_BULK',
@@ -475,6 +572,8 @@
         batch.forEach(t => handleDecisionFailure(t.id, response?.error || 'no response'));
         return;
       }
+
+      recordPerf('jev', { tweets: batch.length, calls: response.calls || 1, wallMs: Date.now() - sentAt, usage: response.usage, model: response.model });
 
       for (const t of batch) {
         const r = response.results[t.id];
@@ -593,8 +692,7 @@
         pendingTweets.delete(tweet.id);
       }
 
-      // The LLM path pauses between calls; Jev does not need to
-      if (!engine.jev) await sleep(50);
+      // no pause: the worker count is the rate limit
     }
   }
 
@@ -660,6 +758,7 @@
     );
 
     if (unmatchedCriteria.length > 0 && tweet.text.length > 10) {
+      const askedAt = Date.now();
       try {
         const response = await chrome.runtime.sendMessage({
           type: 'ANALYZE_TWEET',
@@ -679,6 +778,9 @@
         }
         if (response?.scores) Object.assign(scores, response.scores);
         if (response?.engine) usedEngine = response.engine;
+        if (response?.engine && !response.error) {
+          recordPerf(response.engine === 'jev' ? 'jev' : 'llm', { tweets: 1, calls: response.calls || 1, wallMs: Date.now() - askedAt, usage: response.usage, model: response.model });
+        }
 
         // The engine answered with an error and decided nothing: this is not a "no match"
         if (response?.error && !response.matches?.length && matchedCriteria.length === 0) {
@@ -806,9 +908,11 @@
   function renderScores(element, result) {
     const existing = element.querySelector('.ta-scores');
     if (!engine.showScores || !result?.scores) { existing?.remove(); return; }
-    // A matched topic with Tag on already shows its percent in the tag itself: no second chip
-    const tagged = new Set((result.matchedCriteria || []).filter(c => c.actions?.tag && !c.actions?.hide).map(c => c.id));
-    const entries = criteria.filter(c => Number.isFinite(result.scores[c.id]) && !tagged.has(c.id));
+    // A tweet that matched shows its tag(s) and nothing else: the decision is made, extra chips
+    // are noise. Chips are for tweets that matched nothing, where they are the only signal.
+    const showsTag = (result.matchedCriteria || []).some(c => c.actions?.tag && !c.actions?.hide);
+    if (showsTag) { existing?.remove(); return; }
+    const entries = criteria.filter(c => Number.isFinite(result.scores[c.id]));
     if (entries.length === 0) { existing?.remove(); return; }
 
     // Redraw only when something changed, so we do not feed our own MutationObserver
@@ -885,9 +989,17 @@
   function getTweetText(element) {
     const texts = [];
 
-    // Get regular tweetText elements (main tweet + quoted tweet)
-    const textElements = element.querySelectorAll(SELECTORS.tweetText);
-    texts.push(...Array.from(textElements).map(el => el.textContent?.trim()).filter(Boolean));
+    // Main tweet text, then any quoted tweet, labelled so the decision engine knows which is which.
+    // The quote often carries the actual subject ("Finally something new" + a quoted Jev benchmark).
+    const textElements = Array.from(element.querySelectorAll(SELECTORS.tweetText));
+    textElements.forEach((el, i) => {
+      const t = el.textContent?.trim();
+      if (!t) return;
+      if (i === 0) { texts.push(t); return; }
+      const quoteBox = el.closest('div[role="link"]');
+      const handle = quoteBox?.querySelector(SELECTORS.userName)?.textContent?.match(/@[A-Za-z0-9_]{1,15}/)?.[0];
+      texts.push(`[Quoted tweet${handle ? ` by ${handle}` : ''}: ${t}]`);
+    });
 
     // Get article content if present (articles don't have tweetText)
     // Article title - usually in a specific styled div
@@ -991,7 +1103,13 @@
     if (message.type === 'RESET_STATS') {
       stats = { analyzed: 0, tagged: 0, hidden: 0, byTopic: {} };
       counted.clear();
+      perf = { jev: newPerf(), llm: newPerf() };
+      schedulePerfBroadcast();
       sendResponse({ ok: true });
+    }
+
+    if (message.type === 'GET_PERF') {
+      sendResponse({ perf: perfSnapshot() });
     }
 
     if (message.type === 'GET_STATS') {

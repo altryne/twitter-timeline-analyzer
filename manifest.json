@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Twitter Timeline Analyzer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Analyze and filter your Twitter timeline using AI-powered topic detection",
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://twitter.com/*",
@@ -48,5 +49,8 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "side_panel": {
+    "default_path": "popup/popup.html?panel=1"
   }
 }

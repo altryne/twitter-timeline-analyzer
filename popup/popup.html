@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Twitter Analyzer</title>
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="perf.css">
 </head>
 <body>
   <div class="container">
@@ -32,6 +33,48 @@
             <input type="checkbox" id="analysisToggle">
             <span class="slider"></span>
           </label>
+        </div>
+      </section>
+
+      <section class="perf-section" id="perfSection">
+        <div class="perf-head">
+          <h2><span class="perf-dot" id="perfDot"></span>Live performance</h2>
+          <div class="engine-switch" id="engineSwitch" role="tablist" title="Switch the decision engine. Tweets on screen are re-judged so you can compare.">
+            <button type="button" data-engine="jev" id="engineJev">Jev</button>
+            <button type="button" data-engine="llm" id="engineLlm">LLM</button>
+            <span class="engine-thumb" id="engineThumb"></span>
+          </div>
+        </div>
+
+        <div class="perf-big">
+          <div class="perf-metric">
+            <span class="perf-num" id="perfTps">0</span>
+            <span class="perf-unit">tweets / sec</span>
+          </div>
+          <div class="perf-metric">
+            <span class="perf-num" id="perfMs">0</span>
+            <span class="perf-unit">ms per call</span>
+          </div>
+          <div class="perf-metric">
+            <span class="perf-num" id="perfCost">$0</span>
+            <span class="perf-unit">per 1k tweets</span>
+          </div>
+        </div>
+
+        <div class="perf-spark" id="perfSpark" title="Latency of the most recent calls, newest on the right"></div>
+
+        <div class="perf-compare">
+          <div class="perf-row" data-engine="jev" id="rowJev">
+            <span class="perf-row-name"><i class="sw sw-jev"></i><span id="nameJev">Jev</span></span>
+            <span class="perf-row-bar"><i id="barJev"></i></span>
+            <span class="perf-row-val" id="valJev">no data yet</span>
+          </div>
+          <div class="perf-row" data-engine="llm" id="rowLlm">
+            <span class="perf-row-name"><i class="sw sw-llm"></i><span id="nameLlm">LLM</span></span>
+            <span class="perf-row-bar"><i id="barLlm"></i></span>
+            <span class="perf-row-val" id="valLlm">no data yet</span>
+          </div>
+          <div class="perf-verdict" id="perfVerdict"></div>
         </div>
       </section>
 
@@ -94,5 +137,6 @@
   </div>
 
   <script src="popup.js"></script>
+  <script src="perf.js"></script>
 </body>
 </html>
