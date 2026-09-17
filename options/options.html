@@ -317,75 +317,12 @@
     <p class="subtitle">Configure your LLM provider for tweet analysis</p>
 
     <div class="section">
-      <h2>LLM Configuration</h2>
-
-      <div class="form-group">
-        <label>Quick Setup</label>
-        <div class="presets">
-          <button class="preset-btn" data-preset="cerebras">Cerebras</button>
-          <button class="preset-btn" data-preset="openai">OpenAI</button>
-          <button class="preset-btn" data-preset="groq">Groq</button>
-          <button class="preset-btn" data-preset="together">Together AI</button>
-          <button class="preset-btn" data-preset="openrouter">OpenRouter</button>
-          <button class="preset-btn" data-preset="custom">Custom</button>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="apiBaseUrl">API Base URL</label>
-        <input type="text" id="apiBaseUrl" placeholder="https://api.cerebras.ai/v1">
-      </div>
-
-      <div class="form-group">
-        <label for="apiKey">
-          API Key
-          <span class="label-hint">(stored locally)</span>
-        </label>
-        <div class="password-wrapper">
-          <input type="password" id="apiKey" placeholder="sk-...">
-          <button type="button" class="toggle-password" id="togglePassword">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-              <circle cx="12" cy="12" r="3"></circle>
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="model">Model</label>
-        <div class="model-row">
-          <select id="model">
-            <option value="">Select a model...</option>
-          </select>
-          <button type="button" class="refresh-btn" id="refreshModelsBtn" title="Fetch models from API">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M23 4v6h-6"></path>
-              <path d="M1 20v-6h6"></path>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-            Refresh
-          </button>
-          <button type="button" class="secondary-btn" id="testLlmBtn" title="Make one real completion with this key and model">Test</button>
-        </div>
-        <div class="jev-test-result" id="llmTestResult"></div>
-        <div class="label-hint" style="margin-top: 4px">
-          Refresh only lists models, which works even with no credits. Test makes a real completion: it asks the model to write a decision rule, the same job it does when you add a topic.
-        </div>
-      </div>
-
-      <div class="info-box" id="providerInfo">
-        Select a provider above to see setup instructions.
-      </div>
-    </div>
-
-    <div class="section">
-      <h2>Decision Engine: Jev <span class="label-hint">(optional, recommended)</span></h2>
+      <h2>Decision Engine: Jev <span class="label-hint">(default)</span></h2>
 
       <div class="form-group">
         <label class="toggle-row" for="jevEnabled">
           <input type="checkbox" id="jevEnabled">
-          Let Jev decide which tweets match
+          Let Jev decide which tweets match (default: much faster and cheaper than an LLM per tweet)
         </label>
       </div>
 
@@ -453,6 +390,69 @@
       <div class="info-box">
         <a href="https://typesafe.ai" target="_blank">Jev</a> is a System One model: it cannot write text, it only answers typed questions with calibrated probabilities, in about 150 to 300 ms and for roughly $0.00002 per tweet.
         Your LLM still writes each topic's criteria (patterns, emoji, and a one-sentence decision rule); Jev then returns a probability for every topic on every tweet. Tweets go out in bulk, 8 per call with several calls in flight, and only uncertain scores get a second single-tweet opinion. If Jev is unreachable the LLM takes over.
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>LLM: topic rule writer <span class="label-hint">(and fallback engine)</span></h2>
+
+      <div class="form-group">
+        <label>Quick Setup</label>
+        <div class="presets">
+          <button class="preset-btn" data-preset="cerebras">Cerebras</button>
+          <button class="preset-btn" data-preset="openai">OpenAI</button>
+          <button class="preset-btn" data-preset="groq">Groq</button>
+          <button class="preset-btn" data-preset="together">Together AI</button>
+          <button class="preset-btn" data-preset="openrouter">OpenRouter</button>
+          <button class="preset-btn" data-preset="custom">Custom</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="apiBaseUrl">API Base URL</label>
+        <input type="text" id="apiBaseUrl" placeholder="https://api.cerebras.ai/v1">
+      </div>
+
+      <div class="form-group">
+        <label for="apiKey">
+          API Key
+          <span class="label-hint">(stored locally)</span>
+        </label>
+        <div class="password-wrapper">
+          <input type="password" id="apiKey" placeholder="sk-...">
+          <button type="button" class="toggle-password" id="togglePassword">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="model">Model</label>
+        <div class="model-row">
+          <select id="model">
+            <option value="">Select a model...</option>
+          </select>
+          <button type="button" class="refresh-btn" id="refreshModelsBtn" title="Fetch models from API">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6"></path>
+              <path d="M1 20v-6h6"></path>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Refresh
+          </button>
+          <button type="button" class="secondary-btn" id="testLlmBtn" title="Make one real completion with this key and model">Test</button>
+        </div>
+        <div class="jev-test-result" id="llmTestResult"></div>
+        <div class="label-hint" style="margin-top: 4px">
+          Refresh only lists models, which works even with no credits. Test makes a real completion: it asks the model to write a decision rule, the same job it does when you add a topic.
+        </div>
+      </div>
+
+      <div class="info-box" id="providerInfo">
+        Select a provider above to see setup instructions.
       </div>
     </div>
 

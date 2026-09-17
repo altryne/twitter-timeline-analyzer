@@ -15,7 +15,7 @@ A Chrome extension that uses AI to analyze and filter your Twitter/X timeline ba
 - **Learning from Feedback**: Manually categorize tweets to improve pattern matching over time
 - **Visual Actions**: Tag, highlight, or hide tweets based on topics
 - **Multiple LLM Providers**: Works with any OpenAI-compatible API (Cerebras, Groq, OpenAI, Together AI, OpenRouter, etc.)
-- **Jev Decision Engine (optional)**: Let [TypeSafe's Jev](https://typesafe.ai), a System One model, make the per-tweet yes/no calls. Your LLM writes each topic's criteria once; Jev judges every tweet against them in ~150-300 ms for about $0.00002 per tweet
+- **Jev Decision Engine (default)**: Let [TypeSafe's Jev](https://typesafe.ai), a System One model, make the per-tweet yes/no calls. Your LLM writes each topic's criteria once; Jev judges every tweet against them in ~150-300 ms for about $0.00002 per tweet
 - **Timeline Takeover Tracking**: Every topic shows how many tweets matched and what percent of the tweets you have seen it accounts for, so you can see how hard the For You algorithm is leaning on one subject
 - **Weave Observability**: Optional [W&B Weave](https://docs.wandb.ai/weave/) integration for tracing LLM calls
 
@@ -93,7 +93,7 @@ POST /chat/completions
 
 1. `chrome://extensions` → Developer mode → **Load unpacked** → pick this folder. After pulling new code, click **Reload** on the extension card. Open X tabs pick up the new version by themselves.
 2. Click the toolbar icon. In Chrome it opens as a **side panel** that stays docked while you scroll; in browsers without side panels (Arc) it opens as the usual popup.
-3. Gear icon → **Decision Engine: Jev** → tick *Let Jev decide which tweets match* → paste your TypeSafe key → **Test** → **Save Settings**.
+3. Gear icon → **Decision Engine: Jev** (on by default) → paste your TypeSafe key → **Test** → **Save Settings**.
 4. (Recommended) In **LLM Configuration** pick a provider, paste its key, click **Refresh**, pick a model, click **Test**. Refresh only lists models and succeeds even with no credits; Test makes a real completion and tells you about problems like `HTTP 402` (out of credits). The LLM is only used to write a rule when you add a topic.
 5. Back in the panel: switch **Analysis** on, type a topic in plain words (for example `Jev from typesafe` or `Personal AI assistants like Muse, Instinct and OpenClaw`), click **Add Topic**. New topics start with Tag and Highlight on.
 6. Scroll your For You feed.
@@ -123,7 +123,7 @@ You can also edit a rule by hand: expand the topic in the panel, change **Jev de
 - A red banner on the page (`Jev is not answering: ...`) names the failing engine and the error. `HTTP 402` means that account is out of credits.
 - Brand-new names (a model called Jev, an app called Muse) are handled: every rule ends with "if the tweet names it directly, the answer is yes", because the model has never heard of them. If a topic still under-scores, make the topic text more specific or lower **Match threshold** in settings.
 
-### Enabling Jev as the Decision Engine (Optional, Recommended)
+### How Jev is used as the decision engine (default)
 
 Classifying every tweet with an LLM is slow and adds up. [Jev](https://docs.typesafe.ai/introduction) is a different kind of model: it cannot generate text, it only answers typed questions with calibrated probabilities. That is exactly the shape of this job.
 

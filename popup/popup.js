@@ -52,11 +52,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     const warning = document.getElementById('apiWarning');
     warning.style.display = 'block';
     // With Jev on, tweets still get decided; the LLM is only missing for writing topic criteria
-    if (settings.jevEnabled && settings.jevApiKey) {
+    if (settings.jevEnabled !== false && settings.jevApiKey) {
       const link = warning.querySelector('a');
       warning.textContent = 'Jev is deciding tweets. Add an LLM key so new topics get a written decision rule. ';
       if (link) warning.appendChild(link);
     }
+  }
+
+  // Jev is the default decision engine: ask for its key first
+  if (settings.jevEnabled !== false && !settings.jevApiKey) {
+    const warning = document.getElementById('apiWarning');
+    const link = warning.querySelector('a');
+    warning.style.display = 'block';
+    warning.textContent = settings.apiKey
+      ? 'Your LLM is deciding every tweet. Add a TypeSafe key to switch to Jev, the default engine: about 10x faster and cheaper. '
+      : 'Add a TypeSafe API key to start. Jev is the default decision engine. ';
+    if (link) warning.appendChild(link);
   }
 
   // Set up event listeners

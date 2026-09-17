@@ -21,8 +21,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // When Jev gets switched on, have the LLM write decision criteria for topics that lack them
   // Same when the LLM starts working again (new key, model or provider): topics added while it
   // was down never got their rule written
-  if (area === 'local' && (changes.jevEnabled?.newValue || changes.jevApiKey?.newValue ||
-      changes.apiKey?.newValue || changes.model?.newValue || changes.apiBaseUrl?.newValue)) {
+  // backfill checks for itself whether Jev is on and an LLM is available
+  if (area === 'local' && (changes.jevEnabled || changes.jevApiKey || changes.apiKey || changes.model || changes.apiBaseUrl)) {
     backfillJevInstructions();
   }
 });
@@ -94,7 +94,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(settings => {
         // Never hand API keys to the content script; it only needs to know what is on
         const { apiKey, jevApiKey, ...rest } = settings;
-        sendResponse({ ...rest, llmConfigured: Boolean(apiKey && settings.apiBaseUrl && settings.model), jevKeySet: Boolean(jevApiKey), jevConfigured: Boolean(settings.jevEnabled && jevApiKey) });
+        sendResponse({ ...rest, llmConfigured: Boolean(apiKey && settings.apiBaseUrl && settings.model), jevKeySet: Boolean(jevApiKey), jevConfigured: Boolean(settings.jevEnabled !== false && jevApiKey) });
       });
     return true;
   }
@@ -220,7 +220,7 @@ async function analyzeTweetWithJev(tweetText, criteria, author, settings) {
 // (tweet, topic) pair, and a second single-tweet opinion only for uncertain scores.
 async function analyzeTweetsBulk(tweets, criteria) {
   const settings = await chrome.storage.local.get(JEV_SETTING_KEYS);
-  if (!settings.jevEnabled || !settings.jevApiKey) {
+  if (settings.jevEnabled === false || !settings.jevApiKey) {
     return { results: {}, error: 'Jev not configured' };
   }
 
@@ -258,7 +258,7 @@ async function analyzeTweet(tweetText, criteria, author = '') {
   const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', ...JEV_SETTING_KEYS]);
 
   let jevError = null;
-  if (settings.jevEnabled && settings.jevApiKey) {
+  if (settings.jevEnabled !== false && settings.jevApiKey) {
     try {
       return await analyzeTweetWithJev(tweetText, criteria, author, settings);
     } catch (err) {
@@ -346,7 +346,7 @@ async function backfillJevInstructions() {
   backfillInFlight = true;
   try {
     const settings = await chrome.storage.local.get(['apiKey', 'apiBaseUrl', 'model', 'criteria', 'jevEnabled', 'jevApiKey']);
-    if (!settings.jevEnabled || !settings.jevApiKey) return;
+    if (settings.jevEnabled === false || !settings.jevApiKey) return;
     if (!settings.apiKey || !settings.apiBaseUrl || !settings.model) return;
 
     const missing = (settings.criteria || []).filter(c => !c.jevInstruction && !c.generating);

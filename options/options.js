@@ -46,7 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'jevEnabled', 'jevApiKey', 'jevModel', 'jevThreshold', 'jevDecideAll', 'jevShowScores']);
 
   // Jev decision engine
-  document.getElementById('jevEnabled').checked = Boolean(settings.jevEnabled);
+  document.getElementById('jevEnabled').checked = settings.jevEnabled !== false; // Jev is the default engine
   document.getElementById('jevApiKey').value = settings.jevApiKey || '';
   document.getElementById('jevModel').value = settings.jevModel || '';
   document.getElementById('jevThreshold').value = Number.isFinite(Number(settings.jevThreshold)) && settings.jevThreshold !== undefined
@@ -431,7 +431,13 @@ async function testJev() {
 async function saveSettings() {
   // Jev settings save on their own, so a flaky LLM provider cannot block them
   const jev = readJevSettings();
-  if (jev.jevEnabled) {
+  if (jev.jevEnabled && !jev.jevApiKey) {
+    // Default engine, no key yet: keep the preference, and let the LLM carry on until a key arrives
+    await chrome.storage.local.set(jev);
+    const out = document.getElementById('jevTestResult');
+    out.className = 'jev-test-result error';
+    out.textContent = 'Jev is the default engine but has no key yet. Get one at console.typesafe.ai. Until then your LLM decides (slower and pricier).';
+  } else if (jev.jevEnabled) {
     const ok = await testJev();
     if (!ok) {
       showStatus('Jev is enabled but the connection test failed. Fix the key or switch Jev off.', 'error');
